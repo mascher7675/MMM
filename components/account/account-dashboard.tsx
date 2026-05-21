@@ -2,7 +2,7 @@
  
 "use client"
  
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { User } from "@supabase/supabase-js"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -74,19 +74,33 @@ const DELIVERY_STATE_CONFIG: Record<string, { label: string; badgeClass: string 
 // Returns true if the 5pm-day-before cutoff has passed for a given order.
 // Uses delivery_date if present, falls back to placed_at date.
 // ---------------------------------------------------------------------------
-function isPastCancellationCutoff(order: Order): boolean {
-  const dateStr = order.delivery_date
-    ?? (order.placed_at ? order.placed_at.slice(0, 10) : null)
-  if (!dateStr) return false
-  const deliveryDate = new Date(dateStr + "T12:00:00")
-  const cutoff = new Date(deliveryDate)
-  cutoff.setDate(cutoff.getDate() - 1) // day before delivery
-  cutoff.setHours(17, 0, 0, 0)         // 5:00 PM local time
-  return new Date() >= cutoff
+// ---------------------------------------------------------------------------
+// Deterministic date helpers — no toLocaleDateString() to avoid hydration
+// mismatches between Node.js SSR and the browser.
+// ---------------------------------------------------------------------------
+const WEEKDAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
+const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+const MONTH_NAMES_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+
+function formatOrderDate(dateString: string): string {
+  // "May 19, 2026" — replaces toLocaleDateString for order created_at
+  const ymd = dateString.slice(0, 10).split("-").map(Number)
+  return `${MONTH_NAMES_SHORT[ymd[1] - 1]} ${ymd[2]}, ${ymd[0]}`
 }
 
-/** Returns the cutoff deadline string e.g. "Wednesday, May 6th at 5pm" */
+function getCutoffDateMs(order: Order): number | null {
+  const dateStr = order.delivery_date
+    ?? (order.placed_at ? order.placed_at.slice(0, 10) : null)
+  if (!dateStr) return null
+  const deliveryDate = new Date(dateStr + "T12:00:00")
+  const cutoff = new Date(deliveryDate)
+  cutoff.setDate(cutoff.getDate() - 1)
+  cutoff.setHours(17, 0, 0, 0)
+  return cutoff.getTime()
+}
+
 function getCutoffLabel(order: Order): string {
+  // "Wednesday, May 6th at 5pm" — deterministic, no toLocaleDateString
   const dateStr = order.delivery_date
     ?? (order.placed_at ? order.placed_at.slice(0, 10) : null)
   if (!dateStr) return "5pm the day before delivery"
@@ -94,14 +108,12 @@ function getCutoffLabel(order: Order): string {
   const cutoff = new Date(deliveryDate)
   cutoff.setDate(cutoff.getDate() - 1)
   cutoff.setHours(17, 0, 0, 0)
-  const dayName = cutoff.toLocaleDateString("en-US", { weekday: "long" })
-  const month = cutoff.toLocaleDateString("en-US", { month: "long" })
   const day = cutoff.getDate()
   const suffix =
     day % 10 === 1 && day !== 11 ? "st" :
     day % 10 === 2 && day !== 12 ? "nd" :
     day % 10 === 3 && day !== 13 ? "rd" : "th"
-  return `${dayName}, ${month} ${day}${suffix} at 5pm`
+  return `${WEEKDAY_NAMES[cutoff.getDay()]}, ${MONTH_NAMES_LONG[cutoff.getMonth()]} ${day}${suffix} at 5pm`
 }
 
 export function AccountDashboard({ user, profile, subscriptions, orders }: AccountDashboardProps) {
@@ -122,13 +134,11 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
   const primarySubscription = subscriptions.find((s) => s.status === "active") ?? null
  
   const formatPrice = (cents: number) => `$${(cents / 100).toFixed(2)}`
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })
-  }
+
+  // nowMs is null on SSR and set client-side — used for cutoff comparisons
+  // to avoid new Date() hydration mismatches.
+  const [nowMs, setNowMs] = useState<number | null>(null)
+  useEffect(() => { setNowMs(Date.now()) }, [])
  
   const toggleOrder = (orderId: string) => {
     const newExpanded = new Set(expandedOrders)
@@ -205,13 +215,19 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
 
   // True when the order is a one-time that wasn't already cancelled/delivered
   // but the 5pm cutoff has already passed — we show a "window closed" note.
-  const isPastCutoff = (order: Order) =>
-    order.order_type === "one_time" &&
-    order.status !== "cancelled" &&
-    order.delivery_state !== "delivered" &&
-    order.delivery_state !== "cancelled" &&
-    !refundSent.has(order.id) &&
-    isPastCancellationCutoff(order)
+  const isPastCutoff = (order: Order, nowTimestamp: number | null) => {
+    if (nowTimestamp === null) return false
+    const cutoffMs = getCutoffDateMs(order)
+    return (
+      order.order_type === "one_time" &&
+      order.status !== "cancelled" &&
+      order.delivery_state !== "delivered" &&
+      order.delivery_state !== "cancelled" &&
+      !refundSent.has(order.id) &&
+      cutoffMs !== null &&
+      nowTimestamp >= cutoffMs
+    )
+  }
  
   return (
     <div className="space-y-8">
@@ -284,8 +300,10 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                   const deliveryBadge = getDeliveryBadge(order)
                   const totalQty      = order.order_items?.reduce((sum, i) => sum + (i.quantity || 0), 0) ?? 0
                   const isCancelled   = order.status === "cancelled" || order.delivery_state === "cancelled"
-                  const eligible      = isRefundEligible(order) && !isPastCancellationCutoff(order)
-                  const cutoffPassed  = isPastCutoff(order) && isPastCancellationCutoff(order)
+                  const cutoffMs      = getCutoffDateMs(order)
+                  const pastCutoff    = nowMs !== null && cutoffMs !== null && nowMs >= cutoffMs
+                  const eligible      = isRefundEligible(order) && !pastCutoff
+                  const cutoffPassed  = isPastCutoff(order, nowMs)
                   const formOpen      = refundOpen.has(order.id)
                   const isSending     = refundSending.has(order.id)
                   const wasSent       = refundSent.has(order.id)
@@ -338,7 +356,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                             )}
                           </div>
                           <p className="mt-1 text-sm text-muted-foreground">
-                            {formatDate(order.created_at)} · {totalQty} item{totalQty !== 1 ? "s" : ""}
+                            {formatOrderDate(order.created_at)} · {totalQty} item{totalQty !== 1 ? "s" : ""}
                           </p>
                         </div>
                         <div className="flex items-center gap-3">
@@ -433,7 +451,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               <p className="text-sm text-gray-600 dark:text-gray-400">
                                 This order was cancelled
                                 {order.cancelled_at && (
-                                  <> on {formatDate(order.cancelled_at)}</>
+                                  <> on {formatOrderDate(order.cancelled_at!)}</>
                                 )}.
                               </p>
                               {order.refund_amount_cents != null && (

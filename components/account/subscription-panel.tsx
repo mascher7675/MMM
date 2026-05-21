@@ -71,7 +71,7 @@ export interface Subscription {
   delivery_dates: string[] | null
   subscription_items: SubscriptionItem[]
   // Pause fields
-  pause_status: "none" | "pending" | "approved"
+  pause_status: "none" | "pending" | "approved" | null
   pause_requested_from: string | null
   pause_requested_until: string | null
   pause_skip_dates: string[] | null
@@ -107,7 +107,6 @@ function milkTypeFromProductId(productId: string | undefined): "oat" | "almond" 
 const THURSDAY = 4
 const FRIDAY = 5
 const CUTOFF_HOUR = 17
-const UNLOCK_HOUR = 12
 
 function getNextDeliveryDate(targetDay: typeof THURSDAY | typeof FRIDAY): Date {
   const now = new Date()
@@ -131,11 +130,39 @@ function getFinalDeliveryDate(deliveryDay: string, periodEnd: Date): Date | null
   return null
 }
 
-function formatDate(date: Date | string): string {
-  const d = typeof date === "string"
-    ? new Date(date.length === 10 ? date + "T12:00:00" : date)
-    : date
-  return d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
+// Deterministic date helpers — never use toLocaleDateString() which can
+// differ between Node.js (SSR) and the browser, causing hydration errors.
+const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
+const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+
+function parseDateParts(dateStr: string): { y: number; m: number; d: number } {
+  const ymd = dateStr.length > 10 ? dateStr.slice(0, 10) : dateStr
+  const [y, m, d] = ymd.split("-").map(Number)
+  return { y, m, d }
+}
+
+function formatDateLong(dateStr: string): string {
+  // "Thursday, May 21" style
+  const { y, m, d } = parseDateParts(dateStr)
+  const jsDate = new Date(y, m - 1, d)
+  return `${WEEKDAYS[jsDate.getDay()]}, ${MONTHS_LONG[m - 1]} ${d}`
+}
+
+function formatDateShort(dateStr: string): string {
+  // "May 21" style
+  const { m, d } = parseDateParts(dateStr)
+  return `${MONTHS_SHORT[m - 1]} ${d}`
+}
+
+function formatDateFull(dateStr: string): string {
+  // "May 21, 2026" style
+  const { y, m, d } = parseDateParts(dateStr)
+  return `${MONTHS_LONG[m - 1]} ${d}, ${y}`
+}
+
+function toDateStr(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
 function formatPrice(cents: number) {
@@ -245,7 +272,7 @@ function NoSubscriptionCard() {
 }
 
 // ---------------------------------------------------------------------------
-// Paused subscription card
+// Paused subscription card (status === "paused")
 // ---------------------------------------------------------------------------
 function PausedSubscriptionCard({ subscription }: { subscription: Subscription }) {
   const items = subscription.subscription_items
@@ -269,15 +296,13 @@ function PausedSubscriptionCard({ subscription }: { subscription: Subscription }
       {/* Body */}
       <div className="px-4 py-4 space-y-3">
         <p className="text-sm text-muted-foreground">
-          Your subscription is currently paused. Deliveries are on hold — we'll resume them once your pause period ends or you reach out to us.
+          Your subscription is currently paused. Deliveries are on hold — we&apos;ll resume them once your pause period ends or you reach out to us.
         </p>
         {subscription.stripe_pause_resumes_at && (
           <p className="text-xs text-muted-foreground">
             Billing resumes automatically on{" "}
             <span className="font-medium text-foreground">
-              {new Date(subscription.stripe_pause_resumes_at).toLocaleDateString("en-US", {
-                month: "long", day: "numeric", year: "numeric",
-              })}
+              {formatDateFull(subscription.stripe_pause_resumes_at)}
             </span>
           </p>
         )}
@@ -288,15 +313,17 @@ function PausedSubscriptionCard({ subscription }: { subscription: Subscription }
               {subscription.pause_skip_dates
                 .slice()
                 .sort()
-                .map((d) =>
-                  new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
-                )
+                .map((d) => formatDateLong(d))
                 .join(", ")}
             </span>
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          Questions? Contact us and we'll get your deliveries back on track.
+          Questions?{" "}
+          <Link href="/#contact" className="underline hover:text-foreground">
+            Contact us
+          </Link>{" "}
+          and we&apos;ll get your deliveries back on track.
         </p>
       </div>
     </div>
@@ -317,6 +344,8 @@ function SingleSubscriptionCard({
 }) {
   const router = useRouter()
 
+  // ── All state & hooks must come first — before any early returns ──────────
+
   const [isUpdatingDay, setIsUpdatingDay] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
   const [isReactivating, setIsReactivating] = useState(false)
@@ -335,6 +364,9 @@ function SingleSubscriptionCard({
   const [dayUpdateSuccess, setDayUpdateSuccess] = useState(false)
   const [pauseSuccess, setPauseSuccess] = useState(false)
   const [reactivateSuccess, setReactivateSuccess] = useState(false)
+  const [localPauseStatus, setLocalPauseStatus] = useState<"none" | "pending" | "approved" | null>(null)
+  const [submittedSkipDates, setSubmittedSkipDates] = useState<string[]>([])
+  const [pauseDialogOpen, setPauseDialogOpen] = useState(false)
 
   const [openSection, setOpenSection] = useState<"order" | "milk" | "delivery" | null>(null)
 
@@ -358,6 +390,34 @@ function SingleSubscriptionCard({
   const [cancelSessionFinalDate, setCancelSessionFinalDate] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // All date/time state is null on SSR and populated client-side only to avoid
+  // hydration mismatches from new Date() differing between server and browser.
+  const [todayISO, setTodayISO] = useState<string | null>(null)
+  const [isSelectedDayLocked, setIsSelectedDayLocked] = useState(false)
+  const [isMilkLocked, setIsMilkLocked] = useState(false)
+  const [deliveryOptions, setDeliveryOptions] = useState<{ day: "thursday" | "friday"; date: Date }[]>([])
+
+  useEffect(() => {
+    const d = new Date()
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, "0")
+    const dd = String(d.getDate()).padStart(2, "0")
+    setTodayISO(`${yyyy}-${mm}-${dd}`)
+    setIsSelectedDayLocked(isDeliveryDayLocked(selectedDay))
+    setIsMilkLocked(isDeliveryDayLocked(subscription.delivery_day as "thursday" | "friday"))
+    setDeliveryOptions(
+      [
+        { day: "thursday" as const, date: getNextDeliveryDate(THURSDAY) },
+        { day: "friday" as const, date: getNextDeliveryDate(FRIDAY) },
+      ].sort((a, b) => a.date.getTime() - b.date.getTime())
+    )
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-check lock state when selectedDay changes
+  useEffect(() => {
+    setIsSelectedDayLocked(isDeliveryDayLocked(selectedDay))
+  }, [selectedDay])
+
   const didSyncRef = useRef(false)
   const [isSyncingPeriodEnd, setIsSyncingPeriodEnd] = useState(false)
   useEffect(() => {
@@ -376,13 +436,14 @@ function SingleSubscriptionCard({
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Show paused card instead of the inactive fallback
+  // ── Early returns (after all hooks) ───────────────────────────────────────
+
   if (subscription.status === "paused") {
     return <PausedSubscriptionCard subscription={subscription} />
   }
 
   if (!isValidActiveSubscription(subscription)) {
-    const sub = subscription as Subscription
+    const sub = subscription
     return (
       <div className="rounded-lg border border-border bg-card/50 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -399,22 +460,24 @@ function SingleSubscriptionCard({
     )
   }
 
-  const activeSubscription = subscription
-  const isCancellationScheduled = activeSubscription.cancel_at_period_end
-  const isSelectedDayLocked = isDeliveryDayLocked(selectedDay)
-  const isMilkLocked = isDeliveryDayLocked(activeSubscription.delivery_day as "thursday" | "friday")
+  // ── Active subscription render ─────────────────────────────────────────────
 
-  const nextThursday = getNextDeliveryDate(THURSDAY)
-  const nextFriday = getNextDeliveryDate(FRIDAY)
-  const deliveryOptions = [
-    { day: "thursday" as const, date: nextThursday },
-    { day: "friday" as const, date: nextFriday },
-  ].sort((a, b) => a.date.getTime() - b.date.getTime())
+  const activeSubscription = subscription
+  const pauseStatus = localPauseStatus ?? activeSubscription.pause_status ?? "none"
+  const isCancellationScheduled = activeSubscription.cancel_at_period_end
 
   const monthlyTotal = activeSubscription.subscription_items.reduce(
     (sum, item) => sum + item.price_cents * item.quantity,
     0
   )
+
+  const currentMilkSummary = activeSubscription.subscription_items
+    .map((item) => {
+      const mt = milkTypeFromProductId(item.product_id)
+      return mt ? MILK_OPTIONS.find((o) => o.type === mt)?.label : null
+    })
+    .filter(Boolean)
+    .join(", ")
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
@@ -445,12 +508,16 @@ function SingleSubscriptionCard({
     if (result.error) {
       setError(result.error)
     } else {
-      setPauseSuccess(true)
+      const dates = [...selectedSkipDates]
+      setPauseDialogOpen(false)
       setPauseNote("")
       setSelectedSkipDates([])
-      // Do NOT router.refresh() here — the subscription status hasn't changed yet
-      // and refreshing would reset the pauseSuccess state, making it look like
-      // the customer has no subscription.
+      setSubmittedSkipDates(dates)
+      setPauseSuccess(true)
+      setTimeout(() => {
+        setPauseSuccess(false)
+        setLocalPauseStatus("pending")
+      }, 5000)
     }
   }
 
@@ -462,6 +529,9 @@ function SingleSubscriptionCard({
     if (result.error) {
       setError(result.error)
     } else {
+      setPauseSuccess(false)
+      setLocalPauseStatus(null)
+      setSubmittedSkipDates([])
       router.refresh()
     }
   }
@@ -553,32 +623,21 @@ function SingleSubscriptionCard({
     return dates
   })()
 
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const remainingDeliveries = allDeliveries.filter((d) => d >= today)
+  const remainingDeliveries = todayISO
+    ? allDeliveries.filter((d) => {
+        const dISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+        return dISO >= todayISO
+      })
+    : []
 
   const lastDeliveryDisplay: string | null = finalDeliveryDate
-    ? finalDeliveryDate.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    ? formatDateLong(toDateStr(finalDeliveryDate))
     : cancelSessionFinalDate ?? null
-
-  const currentMilkSummary = activeSubscription.subscription_items
-    .map((item) => {
-      const mt = milkTypeFromProductId(item.product_id)
-      return mt ? MILK_OPTIONS.find((o) => o.type === mt)?.label : null
-    })
-    .filter(Boolean)
-    .join(", ")
 
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
-      {totalCount > 1 && (
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Subscription {index + 1}
-        </p>
-      )}
-
       {error && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
@@ -612,7 +671,7 @@ function SingleSubscriptionCard({
                       >
                         <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 dark:bg-amber-500 shrink-0" />
                         <span className={i === remainingDeliveries.length - 1 ? "font-medium" : ""}>
-                          {formatDate(d)}
+                          {formatDateLong(toDateStr(d))}
                           {i === remainingDeliveries.length - 1 && " — final delivery"}
                         </span>
                       </li>
@@ -759,73 +818,73 @@ function SingleSubscriptionCard({
             }
 
             return activeSubscription.subscription_items.map((item, itemIndex) => {
-            const currentMilk = milkTypeFromProductId(item.product_id)
-            const selectedMilk = selectedMilkTypes[item.id] ?? currentMilk
-            const isSwapping = swappingItemId === item.id
-            const swapSuccess = swapSuccessItemId === item.id
-            const hasChanged = selectedMilk !== currentMilk
-            if (!currentMilk) return null
+              const currentMilk = milkTypeFromProductId(item.product_id)
+              const selectedMilk = selectedMilkTypes[item.id] ?? currentMilk
+              const isSwapping = swappingItemId === item.id
+              const swapSuccess = swapSuccessItemId === item.id
+              const hasChanged = selectedMilk !== currentMilk
+              if (!currentMilk) return null
 
-            let itemLabel: string
-            if (swappableItems.length === 1) {
-              itemLabel = ""
-            } else if (sizeCount[item.size] > 1) {
-              sizeIndex[item.size] = (sizeIndex[item.size] ?? 0) + 1
-              const bottleWord = item.quantity > 1 ? `Bottles` : `Bottle`
-              itemLabel = `${item.size} — ${bottleWord} ${sizeIndex[item.size]}${item.quantity > 1 ? ` (×${item.quantity})` : ""}`
-            } else {
-              itemLabel = item.quantity > 1 ? `${item.size} (×${item.quantity})` : item.size
-            }
+              let itemLabel: string
+              if (swappableItems.length === 1) {
+                itemLabel = ""
+              } else if (sizeCount[item.size] > 1) {
+                sizeIndex[item.size] = (sizeIndex[item.size] ?? 0) + 1
+                const bottleWord = item.quantity > 1 ? `Bottles` : `Bottle`
+                itemLabel = `${item.size} — ${bottleWord} ${sizeIndex[item.size]}${item.quantity > 1 ? ` (×${item.quantity})` : ""}`
+              } else {
+                itemLabel = item.quantity > 1 ? `${item.size} (×${item.quantity})` : item.size
+              }
 
-            const showDivider = itemIndex > 0 && swappableItems.length > 1
+              const showDivider = itemIndex > 0 && swappableItems.length > 1
 
-            return (
-              <div key={item.id} className={`space-y-2.5${showDivider ? " border-t border-border pt-3 mt-1" : ""}`}>
-                {itemLabel && (
-                  <p className="text-xs font-medium text-muted-foreground">{itemLabel}</p>
-                )}
-                <div className="grid grid-cols-3 gap-2">
-                  {MILK_OPTIONS.map(({ type, label }) => (
-                    <button
-                      key={type}
-                      type="button"
-                      disabled={isSwapping || isMilkLocked}
-                      onClick={() => setSelectedMilkTypes((prev) => ({ ...prev, [item.id]: type }))}
-                      className={`rounded-lg border-2 px-2 py-2 text-center text-xs font-medium transition-all disabled:opacity-50 ${
-                        selectedMilk === type
-                          ? "border-sage bg-sage/10 text-foreground"
-                          : "border-border hover:border-sage/50 text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {label}
-                      {type === currentMilk && (
-                        <span className="block text-[10px] font-normal text-muted-foreground mt-0.5">current</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex justify-center">
-                  {swapSuccess ? (
-                    <div className="flex items-center gap-1.5 text-xs text-sage">
-                      <CheckCircle className="h-3.5 w-3.5" />
-                      Updated! Takes effect next delivery.
-                    </div>
-                  ) : (
-                    <Button
-                      onClick={() => handleMilkSwap(item, selectedMilk as "oat" | "almond" | "hemp")}
-                      disabled={!hasChanged || isSwapping || isMilkLocked}
-                      variant="outline"
-                      size="sm"
-                      className="gap-2 px-6 cursor-pointer"
-                    >
-                      {isSwapping && <Loader2 className="h-4 w-4 animate-spin" />}
-                      {isSwapping ? "Saving…" : hasChanged ? "Save Change" : "No Changes"}
-                    </Button>
+              return (
+                <div key={item.id} className={`space-y-2.5${showDivider ? " border-t border-border pt-3 mt-1" : ""}`}>
+                  {itemLabel && (
+                    <p className="text-xs font-medium text-muted-foreground">{itemLabel}</p>
                   )}
+                  <div className="grid grid-cols-3 gap-2">
+                    {MILK_OPTIONS.map(({ type, label }) => (
+                      <button
+                        key={type}
+                        type="button"
+                        disabled={isSwapping || isMilkLocked}
+                        onClick={() => setSelectedMilkTypes((prev) => ({ ...prev, [item.id]: type }))}
+                        className={`rounded-lg border-2 px-2 py-2 text-center text-xs font-medium transition-all disabled:opacity-50 ${
+                          selectedMilk === type
+                            ? "border-sage bg-sage/10 text-foreground"
+                            : "border-border hover:border-sage/50 text-muted-foreground hover:text-foreground"
+                        }`}
+                      >
+                        {label}
+                        {type === currentMilk && (
+                          <span className="block text-[10px] font-normal text-muted-foreground mt-0.5">current</span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex justify-center">
+                    {swapSuccess ? (
+                      <div className="flex items-center gap-1.5 text-xs text-sage">
+                        <CheckCircle className="h-3.5 w-3.5" />
+                        Updated! Takes effect next delivery.
+                      </div>
+                    ) : (
+                      <Button
+                        onClick={() => handleMilkSwap(item, selectedMilk as "oat" | "almond" | "hemp")}
+                        disabled={!hasChanged || isSwapping || isMilkLocked}
+                        variant="outline"
+                        size="sm"
+                        className="gap-2 px-6 cursor-pointer"
+                      >
+                        {isSwapping && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {isSwapping ? "Saving…" : hasChanged ? "Save Change" : "No Changes"}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )
-          })
+              )
+            })
           })()}
         </CollapsibleRow>
 
@@ -836,9 +895,10 @@ function SingleSubscriptionCard({
           sublabel={(() => {
             const day = activeSubscription.delivery_day
             const label = day.charAt(0).toUpperCase() + day.slice(1) + "s"
-            const nextDate = getNextDeliveryDate(day === "friday" ? FRIDAY : THURSDAY)
-            const dateStr = nextDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })
-            return `${label} · Next: ${dateStr}`
+            if (deliveryOptions.length === 0) return `${label}`
+            const match = deliveryOptions.find((o) => o.day === day)
+            const dateStr = match ? formatDateShort(toDateStr(match.date)) : ""
+            return dateStr ? `${label} · Next: ${dateStr}` : label
           })()}
           open={openSection === "delivery"}
           onToggle={() => toggleSection("delivery")}
@@ -870,7 +930,7 @@ function SingleSubscriptionCard({
                       <p className="text-sm font-medium text-foreground capitalize">{day}s</p>
                       {locked && <Lock className="h-3 w-3 text-muted-foreground" />}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">Next: {formatDate(date)}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Next: {formatDateShort(toDateStr(date))}</p>
                   </button>
                 )
               })}
@@ -905,49 +965,56 @@ function SingleSubscriptionCard({
       {!isCancellationScheduled && (
         <div className="rounded-lg border border-border overflow-hidden">
 
-          {/* ── Pause section — shows different state based on pause_status ── */}
-          {activeSubscription.pause_status === "approved" ? (
-            // Currently paused — show info banner
+          {/* ── Pause section — state machine on pause_status ── */}
+          {pauseSuccess ? (
+            <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+              <CheckCircle className="h-4 w-4 shrink-0 text-sage" />
+              <span className="text-sm text-foreground">Pause request sent! We&apos;ll be in touch shortly.</span>
+            </div>
+          ) : pauseStatus === "approved" ? (
             <div className="flex items-start gap-3 border-b border-border px-4 py-3">
               <PauseCircle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">Deliveries paused</p>
-                {activeSubscription.stripe_pause_resumes_at && (
+                {activeSubscription.pause_skip_dates && activeSubscription.pause_skip_dates.length > 0 && (() => {
+                  const sorted = activeSubscription.pause_skip_dates.slice().sort()
+                  const lastSkip = sorted[sorted.length - 1]
+                  return (
+                    <>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Skipping:{" "}
+                        {sorted.map((d) => formatDateLong(d)).join(", ")}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Deliveries resume the week after{" "}
+                        {formatDateShort(lastSkip)}.
+                      </p>
+                    </>
+                  )
+                })()}
+                {!activeSubscription.pause_skip_dates?.length && activeSubscription.stripe_pause_resumes_at && (
                   <p className="text-xs text-muted-foreground">
                     Billing resumes automatically on{" "}
-                    {new Date(activeSubscription.stripe_pause_resumes_at).toLocaleDateString("en-US", {
-                      month: "long", day: "numeric", year: "numeric",
-                    })}
-                  </p>
-                )}
-                {activeSubscription.pause_skip_dates && activeSubscription.pause_skip_dates.length > 0 && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Skipping:{" "}
-                    {activeSubscription.pause_skip_dates
-                      .slice()
-                      .sort()
-                      .map((d) =>
-                        new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })
-                      )
-                      .join(", ")}
+                    {formatDateFull(activeSubscription.stripe_pause_resumes_at)}
                   </p>
                 )}
               </div>
             </div>
-          ) : activeSubscription.pause_status === "pending" ? (
-            // Pending approval — show status + cancel option
+          ) : pauseStatus === "pending" ? (
             <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
               <div className="flex items-start gap-2.5 min-w-0">
                 <PauseCircle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-foreground">Pause request pending</p>
                   <p className="text-xs text-muted-foreground">
-                    {activeSubscription.pause_skip_dates && activeSubscription.pause_skip_dates.length > 0
-                      ? `Skipping: ${activeSubscription.pause_skip_dates
-                          .slice().sort()
-                          .map((d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }))
-                          .join(", ")}`
-                      : "Awaiting confirmation"}
+                    {(() => {
+                      const dates = submittedSkipDates.length > 0
+                        ? submittedSkipDates
+                        : (activeSubscription.pause_skip_dates ?? [])
+                      return dates.length > 0
+                        ? `Skipping: ${dates.slice().sort().map((d) => formatDateLong(d)).join(", ")}`
+                        : "Awaiting confirmation"
+                    })()}
                   </p>
                 </div>
               </div>
@@ -960,18 +1027,15 @@ function SingleSubscriptionCard({
                 {isCancellingPause ? "Cancelling…" : "Cancel request"}
               </button>
             </div>
-          ) : pauseSuccess ? (
-            // Just submitted
-            <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
-              <CheckCircle className="h-4 w-4 shrink-0 text-sage" />
-              <span className="text-sm text-foreground">Pause request sent! We'll be in touch shortly.</span>
-            </div>
           ) : (
-            // No pause — show request form
-            <AlertDialog>
+            <AlertDialog open={pauseDialogOpen} onOpenChange={(o) => {
+              setPauseDialogOpen(o)
+              if (!o) { setSelectedSkipDates([]); setPauseNote("") }
+            }}>
               <AlertDialogTrigger asChild>
                 <button
                   type="button"
+                  onClick={() => setPauseDialogOpen(true)}
                   className="flex w-full cursor-pointer items-center gap-2.5 border-b border-border px-4 py-3 text-left text-sm transition-colors hover:bg-secondary/40"
                 >
                   <PauseCircle className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -985,53 +1049,59 @@ function SingleSubscriptionCard({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Request a Pause</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Select the upcoming deliveries you'd like to skip. Your billing will shift forward to account for the missed weeks — no refund needed.
+                    Select the upcoming deliveries you&apos;d like to skip. Your billing will shift forward to account for the missed weeks — no refund needed.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
 
-                {/* Upcoming delivery date checkboxes */}
                 {(() => {
-                  const today = new Date()
-                  today.setHours(0, 0, 0, 0)
+                  if (!todayISO) return null
                   const upcomingDates = (activeSubscription.delivery_dates ?? [])
                     .map((d: string) => d.length > 10 ? d.slice(0, 10) : d)
-                    .filter((d: string) => new Date(d + "T12:00:00") >= today)
+                    .filter((d: string) => d >= todayISO)
                     .sort()
+
                   if (upcomingDates.length === 0) {
                     return (
-                      <p className="mt-2 text-sm text-muted-foreground">No upcoming deliveries found in this billing cycle.</p>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        No upcoming deliveries found in this billing cycle.
+                      </p>
                     )
                   }
+
                   return (
                     <div className="mt-3 space-y-2">
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Select deliveries to skip</p>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Select deliveries to skip
+                      </p>
                       {upcomingDates.map((d: string) => {
-                        const date = new Date(d + "T12:00:00")
-                        const label = date.toLocaleDateString("en-US", {
-                          weekday: "long", month: "long", day: "numeric",
-                        })
                         const checked = selectedSkipDates.includes(d)
+                        const label = formatDateLong(d)
                         return (
-                          <label
+                          <button
                             key={d}
-                            className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
+                            type="button"
+                            onClick={() =>
+                              setSelectedSkipDates((prev) =>
+                                prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
+                              )
+                            }
+                            className={`flex w-full cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
                               checked
                                 ? "border-amber-300 bg-amber-50 text-amber-900"
                                 : "border-border hover:bg-secondary/40"
                             }`}
                           >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() => {
-                                setSelectedSkipDates((prev) =>
-                                  prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]
-                                )
-                              }}
-                              className="h-4 w-4 rounded accent-amber-500"
-                            />
+                            <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors ${
+                              checked ? "border-amber-400 bg-amber-400" : "border-muted-foreground/30"
+                            }`}>
+                              {checked && (
+                                <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 10 10">
+                                  <path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              )}
+                            </span>
                             {label}
-                          </label>
+                          </button>
                         )
                       })}
                     </div>
@@ -1046,15 +1116,20 @@ function SingleSubscriptionCard({
                   className="mt-3"
                 />
 
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Never mind</AlertDialogCancel>
-                  <AlertDialogAction
+                <div className="mt-4 flex justify-end gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => { setPauseDialogOpen(false); setSelectedSkipDates([]); setPauseNote("") }}
+                  >
+                    Never mind
+                  </Button>
+                  <Button
                     onClick={handlePauseRequest}
                     disabled={isSendingPause || selectedSkipDates.length === 0}
                   >
-                    {isSendingPause ? "Sending…" : "Send Request"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
+                    {isSendingPause ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Sending…</> : "Send Request"}
+                  </Button>
+                </div>
               </AlertDialogContent>
             </AlertDialog>
           )}
@@ -1077,7 +1152,7 @@ function SingleSubscriptionCard({
               <AlertDialogHeader>
                 <AlertDialogTitle>Cancel your subscription?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Your deliveries will continue through the end of your current billing period — you'll receive everything you've already paid for. After that, billing and deliveries will stop.
+                  Your deliveries will continue through the end of your current billing period — you&apos;ll receive everything you&apos;ve already paid for. After that, billing and deliveries will stop.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -1114,12 +1189,18 @@ export function SubscriptionPanel({ userId, subscriptions }: SubscriptionPanelPr
   return (
     <div className="space-y-6">
       {visibleSubscriptions.map((sub, i) => (
-        <SingleSubscriptionCard
-          key={sub.id}
-          subscription={sub}
-          index={i}
-          totalCount={visibleSubscriptions.length}
-        />
+        <div key={sub.id} className="space-y-4">
+          {visibleSubscriptions.length > 1 && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Subscription {i + 1}
+            </p>
+          )}
+          <SingleSubscriptionCard
+            subscription={sub}
+            index={i}
+            totalCount={visibleSubscriptions.length}
+          />
+        </div>
       ))}
 
       <div className="flex justify-center pt-1">

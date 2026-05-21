@@ -1405,11 +1405,29 @@ export async function adminPauseSubscription(
 
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
-      .select("stripe_subscription_id")
+      .select("stripe_subscription_id, delivery_dates, delivery_day")
       .eq("id", subscriptionId)
       .single()
 
     if (subError || !sub) return { error: "Subscription not found" }
+
+    if (!skipDates || skipDates.length === 0) {
+      return { error: "Please select at least one delivery date to skip." }
+    }
+
+    // Normalise dates from delivery_dates (Postgres date[] may come back as
+    // "YYYY-MM-DD" strings; slice to 10 chars just in case of extra chars).
+    const scheduledDates: string[] = ((sub.delivery_dates as string[] | null) ?? [])
+      .map((d: string) => (d.length > 10 ? d.slice(0, 10) : d))
+
+    // Validate every requested skip date is actually a scheduled delivery date.
+    // This prevents off-by-one timezone bugs from allowing wrong dates to be saved.
+    const invalidDates = skipDates.filter((d) => !scheduledDates.includes(d))
+    if (invalidDates.length > 0) {
+      return {
+        error: `Selected date(s) not in this subscription's delivery schedule: ${invalidDates.join(", ")}. Expected one of: ${scheduledDates.join(", ")}`,
+      }
+    }
 
     const sorted = [...skipDates].sort()
     const lastSkipDate = sorted[sorted.length - 1] ?? null
