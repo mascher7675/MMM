@@ -1,9 +1,9 @@
 //components/hero.tsx
-
+ 
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
-
+ 
 export function Hero() {
   return (
     <section className="relative overflow-hidden bg-background">
@@ -21,7 +21,7 @@ export function Hero() {
             </h1>
             
             <p className="mt-6 max-w-lg text-lg leading-relaxed text-muted-foreground">
-              Handcrafted oat, almond, and hemp seed milk made fresh weekly and delivered 
+              Handcrafted oat, almond, hemp seed, and cashew milk made fresh weekly and delivered 
               right to your door in reusable glass jars. Simple. Sustainable. Delicious.
             </p>
             
@@ -36,7 +36,7 @@ export function Hero() {
             
             <div className="mt-12 flex items-center gap-8 border-t border-border/50 pt-8">
               <div>
-                <p className="font-serif text-2xl font-medium text-foreground">3</p>
+                <p className="font-serif text-2xl font-medium text-foreground">4</p>
                 <p className="text-xs uppercase tracking-wider text-muted-foreground">Milk Varieties</p>
               </div>
               <div className="h-8 w-px bg-border" />
@@ -51,7 +51,7 @@ export function Hero() {
               </div>
             </div>
           </div>
-
+ 
           {/* Image */}
           <div className="order-1 lg:order-2">
             <div className="relative">

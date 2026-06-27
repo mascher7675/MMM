@@ -5,82 +5,172 @@
 // ---------------------------------------------------------------------------
 const THURSDAY = 4
 const FRIDAY = 5
-const CUTOFF_HOUR = 22
 
+// ---------------------------------------------------------------------------
+// ET (Eastern Time) helpers.
+// Uses the Intl API to get the true wall-clock time in America/New_York,
+// correctly handling both EST (UTC-5) and EDT (UTC-4) automatically.
+// This means the 5 PM cutoff is always 5 PM as customers experience it,
+// regardless of whether daylight saving time is in effect.
+// ---------------------------------------------------------------------------
+
+/** Returns the current time as a Date whose .getHours()/.getDay() reflect
+ *  America/New_York wall-clock time (handles EST and EDT automatically). */
+function nowInEST(): Date {
+  const now = new Date()
+  // Format the current time in ET to extract date parts
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(now)
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0")
+  // Construct a Date using ET components so .getDay()/.getHours() work correctly
+  return new Date(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"))
+}
+
+// Cutoff for skip/change actions: 5 PM EST the evening before delivery.
+const SKIP_CUTOFF_HOUR_EST = 17  // 5 PM
+
+// Cutoff used when computing the "next available" delivery date for new orders.
+// Same 5 PM rule: once it's past 5 PM EST the evening before, we skip to the
+// following week.
+const ORDER_CUTOFF_HOUR_EST = 17  // 5 PM
+
+// ---------------------------------------------------------------------------
+// isSkipLocked
+//
+// Returns true when the skip/unskip window has closed for the given delivery day.
+//
+// Lock schedule (per delivery day):
+//   Thursday customers: locks Wed ≥ 5 PM EST, unlocks Thu ≥ 12 PM EST (noon)
+//   Friday customers:   locks Thu ≥ 5 PM EST, unlocks Fri ≥ 12 PM EST (noon)
+//
+// This matches the "cutoff is 5 PM the evening before delivery" rule.
+// ---------------------------------------------------------------------------
+const UNLOCK_HOUR_EST = 12  // noon — skip window reopens after delivery
+
+export function isSkipLocked(deliveryDay: "thursday" | "friday"): boolean {
+  const targetDay = deliveryDay === "friday" ? FRIDAY : THURSDAY
+  const dayBefore = (targetDay - 1 + 7) % 7
+  const est = nowInEST()
+  const day = est.getDay()
+  const hour = est.getHours()
+
+  // Locked: the evening before delivery, at or after 5 PM EST
+  if (day === dayBefore && hour >= SKIP_CUTOFF_HOUR_EST) return true
+
+  // Locked: delivery day itself, before noon EST (delivery in progress)
+  if (day === targetDay && hour < UNLOCK_HOUR_EST) return true
+
+  return false
+}
+
+// ---------------------------------------------------------------------------
+// computeNextDeliveryDate
+//
+// Returns the next available delivery date (YYYY-MM-DD) for a given delivery day.
+// "Available" means the cutoff (5 PM EST the evening before) has not yet passed.
+// ---------------------------------------------------------------------------
 export function computeNextDeliveryDate(deliveryDay: "thursday" | "friday"): string {
   const targetDay = deliveryDay === "friday" ? FRIDAY : THURSDAY
-  const now = new Date()
-  let daysUntil = (targetDay - now.getDay() + 7) % 7
+  const est = nowInEST()
+  let daysUntil = (targetDay - est.getDay() + 7) % 7
 
-  // If daysUntil === 0, today IS the delivery day.
-  // Today's delivery is either in progress or already done, so advance to next week.
+  // If today IS the delivery day, advance to next week (today's delivery is done/in-progress).
   if (daysUntil === 0) {
     daysUntil = 7
   }
 
-  // If the delivery is tomorrow but we're past the 10 PM cutoff,
-  // skip to the week after so we don't show an un-orderable date.
-  if (daysUntil === 1 && now.getHours() >= CUTOFF_HOUR) {
+  // If delivery is tomorrow and it's past 5 PM EST, skip to the following week.
+  if (daysUntil === 1 && est.getHours() >= ORDER_CUTOFF_HOUR_EST) {
     daysUntil = 8
   }
 
-  const next = new Date(now)
-  next.setDate(now.getDate() + daysUntil)
-  next.setHours(0, 0, 0, 0)
-  const yyyy = next.getFullYear()
-  const mm = String(next.getMonth() + 1).padStart(2, "0")
-  const dd = String(next.getDate()).padStart(2, "0")
+  // Build the date string by advancing from today's ET calendar date by daysUntil.
+  // We use the ET date components from nowInEST() so the result always reflects
+  // the correct calendar date in Eastern Time.
+  const result = new Date(est)
+  result.setDate(result.getDate() + daysUntil)
+  const yyyy = result.getFullYear()
+  const mm = String(result.getMonth() + 1).padStart(2, "0")
+  const dd = String(result.getDate()).padStart(2, "0")
   return `${yyyy}-${mm}-${dd}`
 }
 
 // ---------------------------------------------------------------------------
-// Compute all 4 delivery dates for a new subscription billing cycle.
-// Returns an array of 4 YYYY-MM-DD strings starting from the first delivery.
+// computeDeliveryDates
+//
+// For the weekly model, we compute the next N upcoming delivery dates on the
+// given delivery day starting from the next available one.
+// Default count = 8 (8 weeks / 2 months of upcoming dates).
 // ---------------------------------------------------------------------------
-export function computeDeliveryDates(deliveryDay: "thursday" | "friday"): string[] {
+export function computeDeliveryDates(
+  deliveryDay: "thursday" | "friday",
+  count = 8
+): string[] {
   const first = computeNextDeliveryDate(deliveryDay)
-  const base = new Date(first + "T12:00:00")
-  return [0, 7, 14, 21].map((offset) => {
+  const base = new Date(first + "T12:00:00Z")
+  return Array.from({ length: count }, (_, i) => {
     const d = new Date(base)
-    d.setDate(d.getDate() + offset)
-    const yyyy = d.getFullYear()
-    const mm = String(d.getMonth() + 1).padStart(2, "0")
-    const dd = String(d.getDate()).padStart(2, "0")
+    d.setUTCDate(d.getUTCDate() + i * 7)
+    const yyyy = d.getUTCFullYear()
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
+    const dd = String(d.getUTCDate()).padStart(2, "0")
     return `${yyyy}-${mm}-${dd}`
   })
 }
 
 // ---------------------------------------------------------------------------
-// Recompute remaining delivery dates when a user changes their delivery day.
-// Dates that are already in the past are preserved as-is; only future dates
-// are shifted to the new delivery day on a weekly cadence.
+// getUpcomingDeliveryDates
 //
-// existingDates: the current stored delivery_dates array (YYYY-MM-DD strings)
-// newDeliveryDay: the day the user is switching to
+// Returns the next N delivery dates for a subscription, starting from today,
+// excluding any dates already in skipped_dates.
+// Used by the account page to show what's coming.
+// ---------------------------------------------------------------------------
+export function getUpcomingDeliveryDates(
+  deliveryDay: "thursday" | "friday",
+  skippedDates: string[] = [],
+  count = 8
+): string[] {
+  return computeDeliveryDates(deliveryDay, count + skippedDates.length)
+    .filter((d) => !skippedDates.includes(d))
+    .slice(0, count)
+}
+
+// ---------------------------------------------------------------------------
+// recomputeDeliveryDatesOnDayChange
+//
+// Kept for backwards compatibility with the delivery-day change flow.
+// In the weekly model this is less important (dates are computed on the fly)
+// but is still used when a customer switches their delivery day.
 // ---------------------------------------------------------------------------
 export function recomputeDeliveryDatesOnDayChange(
   existingDates: string[],
   newDeliveryDay: "thursday" | "friday"
 ): string[] {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = nowInEST()
+  // Zero out sub-day components so comparison is date-only
+  const todayDateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`
 
-  // Split into past (keep) and future (recompute)
-  const past = existingDates.filter((d) => new Date(d + "T12:00:00") < today)
-  const futureCount = 4 - past.length
+  const past = existingDates.filter((d) => d < todayDateStr)
+  const futureCount = Math.max(existingDates.length - past.length, 4)
 
-  if (futureCount <= 0) return existingDates
-
-  // Compute new "first upcoming" date on the new delivery day
   const firstNew = computeNextDeliveryDate(newDeliveryDay)
-  const base = new Date(firstNew + "T12:00:00")
+  const base = new Date(firstNew + "T12:00:00Z")
 
   const newFutureDates = Array.from({ length: futureCount }, (_, i) => {
     const d = new Date(base)
-    d.setDate(d.getDate() + i * 7)
-    const yyyy = d.getFullYear()
-    const mm = String(d.getMonth() + 1).padStart(2, "0")
-    const dd = String(d.getDate()).padStart(2, "0")
+    d.setUTCDate(d.getUTCDate() + i * 7)
+    const yyyy = d.getUTCFullYear()
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
+    const dd = String(d.getUTCDate()).padStart(2, "0")
     return `${yyyy}-${mm}-${dd}`
   })
 
@@ -88,57 +178,34 @@ export function recomputeDeliveryDatesOnDayChange(
 }
 
 // ---------------------------------------------------------------------------
-// Returns true if MILK TYPE changes are locked for the given delivery day.
+// isDeliveryDayLocked
 //
-// Lock/unlock schedule (per delivery day):
-//   Thursday customers: locks Wed ≥ 5 PM, unlocks Thu ≥ 12 PM (noon)
-//   Friday customers:   locks Thu ≥ 5 PM, unlocks Fri ≥ 12 PM (noon)
+// Returns true when MILK TYPE changes are locked for the given delivery day.
+// Same lock window as skip: 5 PM EST the evening before delivery.
 // ---------------------------------------------------------------------------
-const MILK_LOCK_HOUR = 17    // 5 PM — milk changes lock the evening before delivery
-const MILK_UNLOCK_HOUR = 12  // noon — milk changes reopen the morning of delivery
-
 export function isDeliveryDayLocked(deliveryDay: "thursday" | "friday"): boolean {
-  const targetDay = deliveryDay === "friday" ? FRIDAY : THURSDAY
-  const dayBefore = (targetDay - 1 + 7) % 7
-  const now = new Date()
-  const day = now.getDay()
-  const hour = now.getHours()
-
-  // Locked: evening before delivery (day-before ≥ 5 PM)
-  if (day === dayBefore && hour >= MILK_LOCK_HOUR) return true
-
-  // Locked: delivery day itself before noon
-  if (day === targetDay && hour < MILK_UNLOCK_HOUR) return true
-
-  return false
+  return isSkipLocked(deliveryDay)
 }
 
 // ---------------------------------------------------------------------------
-// Returns true if DELIVERY DAY SWITCHING is locked.
+// isDeliveryDayChangeLocked
 //
-// Lock/unlock schedule (shared — applies regardless of current delivery day):
-//   Locks:   Wednesday ≥ 5 PM
-//   Unlocks: Friday ≥ 12 PM (noon)
-//   Locked window: Wed 5 PM → Fri 11:59 AM (covers both delivery days)
-//
-// This prevents customers from switching days mid-week to skip a delivery.
+// Returns true when DELIVERY DAY SWITCHING is locked.
+// Covers both delivery days: locks Wed ≥ 5 PM EST, unlocks Fri ≥ 12 PM EST.
 // ---------------------------------------------------------------------------
-const DAY_CHANGE_LOCK_DAY = 3    // Wednesday
-const DAY_CHANGE_LOCK_HOUR = 17  // 5 PM
-
 export function isDeliveryDayChangeLocked(): boolean {
-  const now = new Date()
-  const day = now.getDay()
-  const hour = now.getHours()
+  const est = nowInEST()
+  const day = est.getDay()
+  const hour = est.getHours()
 
-  // Locked: Wednesday at or after 5 PM
-  if (day === DAY_CHANGE_LOCK_DAY && hour >= DAY_CHANGE_LOCK_HOUR) return true
+  // Locked: Wednesday at or after 5 PM EST
+  if (day === 3 && hour >= SKIP_CUTOFF_HOUR_EST) return true
 
-  // Locked: Thursday (all day — between the two delivery days)
+  // Locked: all of Thursday (between the two delivery days)
   if (day === THURSDAY) return true
 
-  // Locked: Friday before noon (Friday deliveries still in progress)
-  if (day === FRIDAY && hour < MILK_UNLOCK_HOUR) return true
+  // Locked: Friday before noon EST (Friday deliveries still in progress)
+  if (day === FRIDAY && hour < UNLOCK_HOUR_EST) return true
 
   return false
 }

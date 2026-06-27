@@ -1,12 +1,12 @@
 //components/how-it-works.tsx
-
+ 
 import Image from "next/image"
-
+ 
 const steps = [
   {
     number: "01",
     title: "Choose Your Milks",
-    description: "Select from oat, almond, or hemp seed milk in 16oz or 32oz jars.",
+    description: "Select from oat, almond, hemp seed, or cashew milk in 16oz or 32oz jars.",
   },
   {
     number: "02",
@@ -19,7 +19,7 @@ const steps = [
     description: "Fresh milk arrives at your door. Return empty jars for reuse.",
   },
 ]
-
+ 
 export function HowItWorks() {
   return (
     <section id="how-it-works" className="bg-secondary py-20 md:py-28">
@@ -36,7 +36,7 @@ export function HowItWorks() {
               />
             </div>
           </div>
-
+ 
           {/* Content */}
           <div>
             <p className="mb-4 text-sm uppercase tracking-[0.25em] text-sage">
@@ -48,7 +48,7 @@ export function HowItWorks() {
             <p className="mt-4 text-muted-foreground">
               Getting fresh, local non-dairy milk has never been easier.
             </p>
-
+ 
             <div className="mt-10 space-y-8">
               {steps.map((step) => (
                 <div key={step.number} className="flex gap-6">
