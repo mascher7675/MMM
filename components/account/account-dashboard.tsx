@@ -60,7 +60,7 @@ interface AccountDashboardProps {
   subscriptions: Subscription[]
   orders: Order[]
 }
-
+ 
 const DELIVERY_STATE_CONFIG: Record<string, { label: string; badgeClass: string }> = {
   pending:          { label: "Preparing",        badgeClass: "bg-yellow-100 text-yellow-800 border-yellow-200" },
   preparing:        { label: "Preparing",        badgeClass: "bg-blue-100 text-blue-800 border-blue-200" },
@@ -81,13 +81,13 @@ const DELIVERY_STATE_CONFIG: Record<string, { label: string; badgeClass: string 
 const WEEKDAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
 const MONTH_NAMES_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 const MONTH_NAMES_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-
+ 
 function formatOrderDate(dateString: string): string {
   // "May 19, 2026" — replaces toLocaleDateString for order created_at
   const ymd = dateString.slice(0, 10).split("-").map(Number)
   return `${MONTH_NAMES_SHORT[ymd[1] - 1]} ${ymd[2]}, ${ymd[0]}`
 }
-
+ 
 function getCutoffDateMs(order: Order): number | null {
   const dateStr = order.delivery_date
     ?? (order.placed_at ? order.placed_at.slice(0, 10) : null)
@@ -98,7 +98,7 @@ function getCutoffDateMs(order: Order): number | null {
   cutoff.setHours(17, 0, 0, 0)
   return cutoff.getTime()
 }
-
+ 
 function getCutoffLabel(order: Order): string {
   // "Wednesday, May 6th at 5pm" — deterministic, no toLocaleDateString
   const dateStr = order.delivery_date
@@ -115,26 +115,26 @@ function getCutoffLabel(order: Order): string {
     day % 10 === 3 && day !== 13 ? "rd" : "th"
   return `${WEEKDAY_NAMES[cutoff.getDay()]}, ${MONTH_NAMES_LONG[cutoff.getMonth()]} ${day}${suffix} at 5pm`
 }
-
+ 
 export function AccountDashboard({ user, profile, subscriptions, orders }: AccountDashboardProps) {
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
-
+ 
   // Refund request state per order
   const [refundOpen, setRefundOpen]       = useState<Set<string>>(new Set())
   const [refundNote, setRefundNote]       = useState<Record<string, string>>({})
   const [refundSending, setRefundSending] = useState<Set<string>>(new Set())
   const [refundSent, setRefundSent]       = useState<Set<string>>(new Set())
   const [refundError, setRefundError]     = useState<Record<string, string>>({})
-
+ 
   const hasActiveSubscription = subscriptions.some(
     (s) => s.status === "active" && Array.isArray(s.subscription_items) && s.subscription_items.length > 0
   )
-
+ 
   // Use first active subscription for the contact panel
   const primarySubscription = subscriptions.find((s) => s.status === "active") ?? null
  
   const formatPrice = (cents: number) => `$${(cents / 100).toFixed(2)}`
-
+ 
   // nowMs is null on SSR and set client-side — used for cutoff comparisons
   // to avoid new Date() hydration mismatches.
   const [nowMs, setNowMs] = useState<number | null>(null)
@@ -149,7 +149,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
     }
     setExpandedOrders(newExpanded)
   }
-
+ 
   const getDeliveryBadge = (order: Order) => {
     const state = order.delivery_state
     if (!state || state === "pending") return null
@@ -162,26 +162,26 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
       </span>
     )
   }
-
+ 
   // ── Refund request helpers ─────────────────────────────────────────────────
   const toggleRefundForm = (orderId: string) => {
     const next = new Set(refundOpen)
     next.has(orderId) ? next.delete(orderId) : next.add(orderId)
     setRefundOpen(next)
   }
-
+ 
   const handleRefundRequest = async (orderId: string) => {
     const sending = new Set(refundSending)
     sending.add(orderId)
     setRefundSending(sending)
     setRefundError((prev) => ({ ...prev, [orderId]: "" }))
-
+ 
     const result = await requestOrderRefund(orderId, refundNote[orderId] ?? "")
-
+ 
     const doneSending = new Set(refundSending)
     doneSending.delete(orderId)
     setRefundSending(doneSending)
-
+ 
     if (result.error) {
       setRefundError((prev) => ({ ...prev, [orderId]: result.error! }))
     } else {
@@ -194,7 +194,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
       setRefundOpen(close)
     }
   }
-
+ 
   /**
    * A one-time order is eligible for a refund request if:
    * - It's a one-time order (not a subscription)
@@ -212,7 +212,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
     order.delivery_state !== "delivered" &&
     order.delivery_state !== "cancelled" &&
     !refundSent.has(order.id)
-
+ 
   // True when the order is a one-time that wasn't already cancelled/delivered
   // but the 5pm cutoff has already passed — we show a "window closed" note.
   const isPastCutoff = (order: Order, nowTimestamp: number | null) => {
@@ -308,7 +308,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                   const isSending     = refundSending.has(order.id)
                   const wasSent       = refundSent.has(order.id)
                   const errMsg        = refundError[order.id] ?? ""
-
+ 
                   return (
                     <div
                       key={order.id}
@@ -395,7 +395,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               </div>
                             </div>
                           )}
-
+ 
                           {/* Delivery address */}
                           {order.delivery_address && (
                             <div>
@@ -406,7 +406,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               </p>
                             </div>
                           )}
-
+ 
                           {/* Payment / Receipt */}
                           {order.stripe_receipt_url ? (
                             <div>
@@ -433,7 +433,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               </p>
                             </div>
                           ) : null}
-
+ 
                           {/* Delivery status */}
                           {order.delivery_state && order.delivery_state !== "pending" && (
                             <div>
@@ -444,7 +444,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               </p>
                             </div>
                           )}
-
+ 
                           {/* Cancellation info */}
                           {isCancelled && (
                             <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
@@ -461,7 +461,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               )}
                             </div>
                           )}
-
+ 
                           {/* ── Refund request section ── */}
                           {cutoffPassed && (
                             <div className="border-t border-border pt-3">
@@ -478,7 +478,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               </p>
                             </div>
                           )}
-
+ 
                           {eligible && (
                             <div className="border-t border-border pt-3">
                               {!formOpen && !wasSent && (
@@ -490,7 +490,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                                   Request cancellation / refund
                                 </button>
                               )}
-
+ 
                               {formOpen && (
                                 <div className="space-y-3 rounded-lg border border-border bg-secondary/30 p-3">
                                   <div>
@@ -535,7 +535,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                                   </div>
                                 </div>
                               )}
-
+ 
                               {wasSent && (
                                 <div className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2.5 dark:border-green-800 dark:bg-green-950/30">
                                   <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-600 dark:text-green-400" />
@@ -549,7 +549,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                               )}
                             </div>
                           )}
-
+ 
                           {/* Order total */}
                           <div className="border-t border-border pt-3 flex justify-between text-sm font-medium">
                             <span>Order Total</span>

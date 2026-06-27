@@ -1,9 +1,9 @@
 //components/account/account-settings.tsx
-
+ 
 "use client"
-
+ 
 import React from "react"
-
+ 
 import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -31,7 +31,7 @@ import {
 import Link from "next/link"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { Textarea } from "@/components/ui/textarea"
-
+ 
 interface Profile {
   id: string
   first_name: string | null
@@ -43,13 +43,12 @@ interface Profile {
   zip: string | null
   delivery_instructions: string | null
 }
-
+ 
 interface AccountSettingsProps {
   user: SupabaseUser
   profile: Profile | null
 }
-
-// ─── Requirement item ─────────────────────────────────────────────────────────
+ 
 function Req({ met, label }: { met: boolean; label: string }) {
   return (
     <li className={`flex items-center gap-1.5 text-xs transition-colors ${met ? "text-sage" : "text-muted-foreground"}`}>
@@ -58,8 +57,7 @@ function Req({ met, label }: { met: boolean; label: string }) {
     </li>
   )
 }
-
-// ─── Alert banner ─────────────────────────────────────────────────────────────
+ 
 function AlertBanner({
   type,
   children,
@@ -84,8 +82,7 @@ function AlertBanner({
     </div>
   )
 }
-
-// ─── Step indicator ───────────────────────────────────────────────────────────
+ 
 function StepDots({ current, total }: { current: number; total: number }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -100,12 +97,11 @@ function StepDots({ current, total }: { current: number; total: number }) {
     </div>
   )
 }
-
+ 
 export function AccountSettings({ user, profile }: AccountSettingsProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-
-  // ── Profile state ──
+ 
   const [isLoading, setIsLoading] = useState(false)
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [formData, setFormData] = useState({
@@ -118,16 +114,14 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     zip: profile?.zip || "",
     deliveryInstructions: profile?.delivery_instructions || "",
   })
-
-  // ── Email state ──
+ 
   const [emailStep, setEmailStep] = useState<"form" | "pending">("form")
   const [pendingEmail, setPendingEmail] = useState("")
   const [isEmailLoading, setIsEmailLoading] = useState(false)
   const [emailMessage, setEmailMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null)
   const [emailData, setEmailData] = useState({ newEmail: "", confirmEmail: "" })
   const [emailUpdatedBanner, setEmailUpdatedBanner] = useState(false)
-
-  // ── Password state ──
+ 
   type PasswordStep = "verify" | "new" | "done"
   const [passwordStep, setPasswordStep] = useState<PasswordStep>("verify")
   const [isVerifyLoading, setIsVerifyLoading] = useState(false)
@@ -139,8 +133,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [verifyMessage, setVerifyMessage] = useState<{ type: "error"; text: string } | null>(null)
   const [passwordMessage, setPasswordMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
-
-  // ── URL param: email_updated ──
+ 
   useEffect(() => {
     if (searchParams.get("email_updated") === "true") {
       setEmailUpdatedBanner(true)
@@ -149,8 +142,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
       window.history.replaceState({}, "", url.toString())
     }
   }, [searchParams])
-
-  // ── Profile handlers ──
+ 
   const handleProfileSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
@@ -173,8 +165,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     }
     setIsLoading(false)
   }
-
-  // ── Password: step 1 — verify current ──
+ 
   const handleVerifyPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!currentPassword.trim()) {
@@ -191,12 +182,11 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     }
     setIsVerifyLoading(false)
   }
-
-  // ── Password: step 2 — set new ──
+ 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setPasswordMessage(null)
-
+ 
     if (passwordData.newPassword !== passwordData.confirmPassword) {
       setPasswordMessage({ type: "error", text: "Passwords do not match." })
       return
@@ -205,7 +195,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
       setPasswordMessage({ type: "error", text: "New password must be different from your current password." })
       return
     }
-
+ 
     setIsPasswordLoading(true)
     const result = await updatePassword(passwordData.newPassword)
     if (result.error) {
@@ -217,7 +207,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     }
     setIsPasswordLoading(false)
   }
-
+ 
   const resetPasswordFlow = () => {
     setPasswordStep("verify")
     setCurrentPassword("")
@@ -228,15 +218,14 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     setShowNewPassword(false)
     setShowConfirmPassword(false)
   }
-
-  // ── Email handlers ──
+ 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setEmailMessage(null)
-
+ 
     const trimmedNew = emailData.newEmail.trim().toLowerCase()
     const trimmedConfirm = emailData.confirmEmail.trim().toLowerCase()
-
+ 
     if (!trimmedNew || !trimmedConfirm) {
       setEmailMessage({ type: "error", text: "Please fill in both email fields." })
       return
@@ -254,7 +243,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
       setEmailMessage({ type: "error", text: "New email must be different from your current email." })
       return
     }
-
+ 
     setIsEmailLoading(true)
     const result = await updateEmail(trimmedNew)
     if (result.error) {
@@ -266,13 +255,12 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     }
     setIsEmailLoading(false)
   }
-
+ 
   const handleSignOut = async () => {
     await signOut()
     router.push("/")
   }
-
-  // ─────────────────────────────────────────────────────────────────────────────
+ 
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -290,8 +278,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
           <p className="text-sm text-muted-foreground">{user.email}</p>
         </div>
       </div>
-
-      {/* Email-updated success banner */}
+ 
       {emailUpdatedBanner && (
         <div className="flex items-start gap-3 rounded-lg border border-sage/30 bg-sage/10 px-4 py-3 text-sm text-sage">
           <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
@@ -308,8 +295,8 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
           </button>
         </div>
       )}
-
-      {/* ── Profile Information ─────────────────────────────────────────────── */}
+ 
+      {/* Profile Information */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -359,15 +346,15 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                 {message.text}
               </AlertBanner>
             )}
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading} className="cursor-pointer">
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Changes
             </Button>
           </form>
         </CardContent>
       </Card>
-
-      {/* ── Delivery Address ────────────────────────────────────────────────── */}
+ 
+      {/* Delivery Address */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -430,15 +417,15 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                 rows={3}
               />
             </div>
-            <Button type="submit" disabled={isLoading}>
+            <Button type="submit" disabled={isLoading} className="cursor-pointer">
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save Address
             </Button>
           </form>
         </CardContent>
       </Card>
-
-      {/* ── Change Email ────────────────────────────────────────────────────── */}
+ 
+      {/* Change Email */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -453,7 +440,6 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
         </CardHeader>
         <CardContent>
           {emailStep === "pending" ? (
-            /* ── Pending confirmation state ── */
             <div className="space-y-5">
               <div className="flex flex-col items-center gap-3 rounded-xl border border-border bg-muted/30 px-6 py-8 text-center">
                 <div className="flex h-14 w-14 items-center justify-center rounded-full bg-sage/10">
@@ -467,7 +453,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   </p>
                 </div>
               </div>
-
+ 
               <div className="space-y-2 rounded-lg border border-border bg-muted/20 px-4 py-3">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   What happens next
@@ -487,7 +473,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   ))}
                 </ol>
               </div>
-
+ 
               <div className="flex items-center gap-2 pt-1">
                 <button
                   onClick={() => {
@@ -502,9 +488,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
               </div>
             </div>
           ) : (
-            /* ── Email change form ── */
             <form onSubmit={handleEmailSubmit} className="space-y-4">
-              {/* Current email display */}
               <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5">
                 <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0">
@@ -512,7 +496,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   <p className="truncate text-sm font-medium text-foreground">{user.email}</p>
                 </div>
               </div>
-
+ 
               <div className="space-y-2">
                 <Label htmlFor="newEmail">New Email Address</Label>
                 <Input
@@ -524,7 +508,7 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   autoComplete="off"
                 />
               </div>
-
+ 
               <div className="space-y-2">
                 <Label htmlFor="confirmEmail">Confirm New Email Address</Label>
                 <Input
@@ -551,12 +535,12 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   </p>
                 )}
               </div>
-
+ 
               {emailMessage && (
                 <AlertBanner type={emailMessage.type}>{emailMessage.text}</AlertBanner>
               )}
-
-              <Button type="submit" disabled={isEmailLoading}>
+ 
+              <Button type="submit" disabled={isEmailLoading} className="cursor-pointer">
                 {isEmailLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Send Confirmation Email
               </Button>
@@ -564,8 +548,8 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
           )}
         </CardContent>
       </Card>
-
-      {/* ── Change Password ─────────────────────────────────────────────────── */}
+ 
+      {/* Change Password */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -576,7 +560,6 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
               <CardTitle className="font-serif text-xl font-medium">Change Password</CardTitle>
               <CardDescription>Update your account password</CardDescription>
             </div>
-            {/* Step indicator */}
             {passwordStep !== "done" && (
               <StepDots current={passwordStep === "verify" ? 0 : 1} total={2} />
             )}
@@ -584,7 +567,6 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
         </CardHeader>
         <CardContent>
           {passwordStep === "done" ? (
-            /* ── Success state ── */
             <div className="space-y-5">
               <div className="flex flex-col items-center gap-3 rounded-xl border border-sage/20 bg-sage/5 px-6 py-8 text-center">
                 <div className="flex h-14 w-14 items-center justify-center rounded-full bg-sage/15">
@@ -606,13 +588,12 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
               </button>
             </div>
           ) : passwordStep === "verify" ? (
-            /* ── Step 1: Verify current password ── */
             <form onSubmit={handleVerifyPassword} className="space-y-4">
               <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
                 <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 <p>For your security, please confirm your current password before making changes.</p>
               </div>
-
+ 
               <div className="space-y-2">
                 <Label htmlFor="currentPassword">Current Password</Label>
                 <div className="relative">
@@ -636,13 +617,13 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   </button>
                 </div>
               </div>
-
+ 
               {verifyMessage && (
                 <AlertBanner type="error">{verifyMessage.text}</AlertBanner>
               )}
-
+ 
               <div className="flex items-center gap-3">
-                <Button type="submit" disabled={isVerifyLoading}>
+                <Button type="submit" disabled={isVerifyLoading} className="cursor-pointer">
                   {isVerifyLoading ? (
                     <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…</>
                   ) : (
@@ -658,13 +639,12 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
               </div>
             </form>
           ) : (
-            /* ── Step 2: Set new password ── */
             <form onSubmit={handlePasswordSubmit} className="space-y-4">
               <div className="flex items-start gap-3 rounded-lg border border-sage/20 bg-sage/5 px-4 py-3 text-sm text-sage">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
                 <p>Identity confirmed. Now choose a new password.</p>
               </div>
-
+ 
               <div className="space-y-2">
                 <Label htmlFor="newPassword">New Password</Label>
                 <div className="relative">
@@ -687,18 +667,15 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                     {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-
-
               </div>
-
-              {/* Requirements checklist */}
+ 
               <ul className="space-y-1.5 rounded-lg border border-border bg-muted/20 px-3 py-2.5">
                 <Req met={passwordData.newPassword.length >= 8} label="At least 8 characters" />
                 <Req met={/[A-Z]/.test(passwordData.newPassword)} label="One uppercase letter" />
                 <Req met={/[0-9]/.test(passwordData.newPassword)} label="One number" />
                 <Req met={/[^A-Za-z0-9]/.test(passwordData.newPassword)} label="One special character" />
               </ul>
-
+ 
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword">Confirm New Password</Label>
                 <div className="relative">
@@ -737,11 +714,11 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                   </p>
                 )}
               </div>
-
+ 
               {passwordMessage && (
                 <AlertBanner type={passwordMessage.type}>{passwordMessage.text}</AlertBanner>
               )}
-
+ 
               <div className="flex items-center gap-3">
                 <Button type="submit" disabled={isPasswordLoading}>
                   {isPasswordLoading ? (
@@ -762,15 +739,15 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
           )}
         </CardContent>
       </Card>
-
-      {/* ── Sign Out ────────────────────────────────────────────────────────── */}
+ 
+      {/* Sign Out */}
       <Card className="border-destructive/20">
         <CardContent className="flex items-center justify-between py-6">
           <div>
             <p className="font-medium text-foreground">Sign Out</p>
             <p className="text-sm text-muted-foreground">Sign out of your account on this device</p>
           </div>
-          <Button variant="outline" onClick={handleSignOut}>
+          <Button variant="outline" onClick={handleSignOut} className="cursor-pointer">
             Sign Out
           </Button>
         </CardContent>
