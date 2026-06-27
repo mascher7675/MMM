@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
 import { revalidatePath } from "next/cache"
 import { PRODUCTS, normalizeProductName } from "@/lib/products"
-import { computeNextDeliveryDate, computeDeliveryDates } from "@/lib/delivery-utils"
+import { computeNextDeliveryDate } from "@/lib/delivery-utils"
 
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,6 @@ export interface AdminOrder {
   subscription_final_delivery_date?: string | null
   subscription_cancel_at_period_end?: boolean | null
   // All 4 delivery dates stored explicitly — updated when user changes delivery day
-  subscription_delivery_dates?: string[] | null
   stripe_subscription_id?: string | null
   delivery_logs: SubscriptionDeliveryLog[]
   order_items: {
@@ -125,18 +124,10 @@ export interface AdminSubscription {
   final_delivery_date: string | null
   stripe_subscription_id: string | null
   next_delivery_date: string | null
-  delivery_dates: string[] | null
+  skipped_dates: string[] | null
   created_at: string
   customer_name?: string
   customer_email?: string
-  // Pause fields
-  pause_status: "none" | "pending" | "approved"
-  pause_requested_from: string | null
-  pause_requested_until: string | null
-  pause_skip_dates: string[] | null
-  pause_note: string | null
-  pause_approved_at: string | null
-  stripe_pause_resumes_at: string | null
   subscription_items: {
     id: string
     product_id: string | null
@@ -360,8 +351,6 @@ export async function createCashCustomer(data: {
     if (data.customer_type === "subscription") {
       const deliveryDay = (data.delivery_day ?? "thursday") as "thursday" | "friday"
       const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
-      const deliveryDates = computeDeliveryDates(deliveryDay)
-
       const { data: sub, error: subError } = await supabase
         .from("subscriptions")
         .insert({
@@ -369,7 +358,7 @@ export async function createCashCustomer(data: {
           status: "active",
           delivery_day: deliveryDay,
           next_delivery_date: nextDeliveryDate,
-          delivery_dates: deliveryDates,
+          skipped_dates: [],
           cancel_at_period_end: false,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -719,8 +708,6 @@ export async function addSubscriptionToCashCustomer(
 
     const deliveryDay = data.delivery_day as "thursday" | "friday"
     const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
-    const deliveryDates = computeDeliveryDates(deliveryDay)
-
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .insert({
@@ -728,7 +715,7 @@ export async function addSubscriptionToCashCustomer(
         status: "active",
         delivery_day: deliveryDay,
         next_delivery_date: nextDeliveryDate,
-        delivery_dates: deliveryDates,
+        skipped_dates: [],
         cancel_at_period_end: false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -875,19 +862,16 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
       (profiles ?? []).map((p) => [p.id, p])
     )
 
-    // Fetch subscriptions (active + cancelled) to get delivery date info AND current items
-    // Now also selects delivery_dates so the admin orders tab can show the correct 4 dates
-    // even after the user changes their delivery day.
+    // Fetch subscriptions to get delivery info and current items
     const { data: subs } = await supabase
       .from("subscriptions")
-      .select("user_id, stripe_subscription_id, delivery_day, next_delivery_date, delivery_dates, final_delivery_date, cancel_at_period_end, status, subscription_items(id, product_id, product_name, size, quantity, price_cents)")
+      .select("user_id, stripe_subscription_id, delivery_day, next_delivery_date, final_delivery_date, cancel_at_period_end, status, subscription_items(id, product_id, product_name, size, quantity, price_cents)")
       .in("user_id", userIds)
 
     // Map user_id -> subscription info (prefer active, fall back to most recent)
     type SubMapEntry = {
       next_delivery_date: string | null
-      delivery_dates: string[] | null
-      final_delivery_date: string | null
+          final_delivery_date: string | null
       cancel_at_period_end: boolean
       delivery_day: string | null
       stripe_subscription_id: string | null
@@ -903,7 +887,6 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
           next_delivery_date: (s.delivery_day === "thursday" || s.delivery_day === "friday")
             ? computeNextDeliveryDate(s.delivery_day)
             : s.next_delivery_date,
-          delivery_dates: (s.delivery_dates as string[] | null) ?? null,
           final_delivery_date: s.final_delivery_date,
           cancel_at_period_end: s.cancel_at_period_end ?? false,
           delivery_day: s.delivery_day ?? null,
@@ -949,8 +932,6 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
       subscription_next_delivery_date: o.order_type === "subscription" ? (subMap[o.user_id]?.next_delivery_date ?? null) : null,
       subscription_final_delivery_date: o.order_type === "subscription" ? (subMap[o.user_id]?.final_delivery_date ?? null) : null,
       subscription_cancel_at_period_end: o.order_type === "subscription" ? (subMap[o.user_id]?.cancel_at_period_end ?? null) : null,
-      // The explicitly stored 4 delivery dates — updated when user changes delivery day
-      subscription_delivery_dates: o.order_type === "subscription" ? (subMap[o.user_id]?.delivery_dates ?? null) : null,
       stripe_subscription_id: o.order_type === "subscription" ? (subMap[o.user_id]?.stripe_subscription_id ?? null) : null,
     }))
 
@@ -1221,19 +1202,11 @@ export async function getAdminSubscriptions(): Promise<{ data: AdminSubscription
         .join(" ") || "Unknown",
       customer_email: profileMap[s.user_id]?.email || "",
       subscription_items: s.subscription_items ?? [],
-      delivery_dates: (s.delivery_dates as string[] | null) ?? null,
+      skipped_dates: ((s.skipped_dates as string[] | null) ?? []).map((d: string) => d.length > 10 ? d.slice(0, 10) : d),
       // Always compute next_delivery_date dynamically so stale DB values don't show wrong dates
       next_delivery_date: (s.delivery_day === "thursday" || s.delivery_day === "friday")
         ? computeNextDeliveryDate(s.delivery_day)
         : s.next_delivery_date,
-      // Pause fields — default to safe values if migration hasn't run yet
-      pause_status: (s.pause_status ?? "none") as "none" | "pending" | "approved",
-      pause_requested_from: s.pause_requested_from ?? null,
-      pause_requested_until: s.pause_requested_until ?? null,
-      pause_skip_dates: (s.pause_skip_dates as string[] | null) ?? null,
-      pause_note: s.pause_note ?? null,
-      pause_approved_at: s.pause_approved_at ?? null,
-      stripe_pause_resumes_at: s.stripe_pause_resumes_at ?? null,
     }))
 
     return { data: enriched as AdminSubscription[], error: null }
@@ -1243,225 +1216,41 @@ export async function getAdminSubscriptions(): Promise<{ data: AdminSubscription
 }
 
 // ---------------------------------------------------------------------------
-// Admin: Approve a customer's pause request
+// Admin: Skip one or more weekly deliveries for a subscription
 //
-// This is the single action that:
-//   1. Calls Stripe pause_collection with resumes_at so billing shifts forward
-//   2. Sets pause_status = 'approved' and subscription status = 'paused' in DB
-//   3. Records pause_approved_at and stripe_pause_resumes_at
-//
-// The pause_skip_dates were already written when the customer submitted the
-// request. The delivery list query excludes those dates automatically.
+// Adds dates to skipped_dates array in Supabase.
+// No Stripe interaction needed — with weekly billing, skipping a week
+// automatically means no charge for that week.
 // ---------------------------------------------------------------------------
-export async function adminApprovePause(
-  subscriptionId: string
-): Promise<{ error: string | null }> {
-  try {
-    const { supabase } = await requireAdmin()
-
-    const { data: sub, error: subError } = await supabase
-      .from("subscriptions")
-      .select("stripe_subscription_id, pause_status, pause_requested_until")
-      .eq("id", subscriptionId)
-      .single()
-
-    if (subError || !sub) return { error: "Subscription not found" }
-    if (sub.pause_status !== "pending") return { error: "No pending pause request on this subscription." }
-
-    // Compute resumes_at: the day AFTER the last skip date so that Stripe
-    // resumes billing the morning after the customer's final skipped delivery.
-    // e.g. if last skip date is June 19 (Thursday), resume June 20.
-    let resumesAt: number | undefined
-    if (sub.pause_requested_until) {
-      const resumeDate = new Date(sub.pause_requested_until + "T12:00:00")
-      resumeDate.setDate(resumeDate.getDate() + 1)
-      resumesAt = Math.floor(resumeDate.getTime() / 1000)
-    }
-
-    // Pause billing on Stripe if there's a Stripe subscription
-    if (sub.stripe_subscription_id) {
-      await stripe.subscriptions.update(sub.stripe_subscription_id, {
-        pause_collection: {
-          behavior: "keep_as_draft",
-          ...(resumesAt ? { resumes_at: resumesAt } : {}),
-        },
-      })
-    }
-
-    const now = new Date().toISOString()
-    const { error: updateError } = await supabase
-      .from("subscriptions")
-      .update({
-        status: "paused",
-        pause_status: "approved",
-        pause_approved_at: now,
-        stripe_pause_resumes_at: resumesAt ? new Date(resumesAt * 1000).toISOString() : null,
-        updated_at: now,
-      })
-      .eq("id", subscriptionId)
-
-    if (updateError) return { error: updateError.message }
-
-    revalidatePath("/admin")
-    return { error: null }
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to approve pause" }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Admin: Deny a customer's pause request (clears the request, no Stripe call)
-// ---------------------------------------------------------------------------
-export async function adminDenyPause(
-  subscriptionId: string
-): Promise<{ error: string | null }> {
-  try {
-    const { supabase } = await requireAdmin()
-
-    const { error } = await supabase
-      .from("subscriptions")
-      .update({
-        pause_status: "none",
-        pause_requested_from: null,
-        pause_requested_until: null,
-        pause_skip_dates: null,
-        pause_note: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", subscriptionId)
-
-    if (error) return { error: error.message }
-
-    revalidatePath("/admin")
-    return { error: null }
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to deny pause" }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Admin: Resume a paused subscription early (or confirm auto-resume happened)
-//
-// Calls Stripe to clear pause_collection, then resets all pause fields in DB
-// and restores status to 'active'.
-// ---------------------------------------------------------------------------
-export async function adminResumePause(
-  subscriptionId: string
-): Promise<{ error: string | null }> {
-  try {
-    const { supabase } = await requireAdmin()
-
-    const { data: sub, error: subError } = await supabase
-      .from("subscriptions")
-      .select("stripe_subscription_id, pause_status")
-      .eq("id", subscriptionId)
-      .single()
-
-    if (subError || !sub) return { error: "Subscription not found" }
-
-    // Resume on Stripe (clear the pause_collection object)
-    if (sub.stripe_subscription_id) {
-      await stripe.subscriptions.update(sub.stripe_subscription_id, {
-        pause_collection: "",  // empty string clears it in Stripe's API
-      } as Parameters<typeof stripe.subscriptions.update>[1])
-    }
-
-    const { error: updateError } = await supabase
-      .from("subscriptions")
-      .update({
-        status: "active",
-        pause_status: "none",
-        pause_requested_from: null,
-        pause_requested_until: null,
-        pause_skip_dates: null,
-        pause_note: null,
-        pause_approved_at: null,
-        stripe_pause_resumes_at: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", subscriptionId)
-
-    if (updateError) return { error: updateError.message }
-
-    revalidatePath("/admin")
-    return { error: null }
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to resume subscription" }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Admin: Directly pause a subscription (admin-initiated, no customer request)
-//
-// Accepts an array of delivery dates to skip. Calls Stripe pause_collection
-// so billing is actually paused, then writes all pause fields to DB.
-// ---------------------------------------------------------------------------
-export async function adminPauseSubscription(
+export async function adminSkipWeeklyDelivery(
   subscriptionId: string,
-  skipDates: string[]  // YYYY-MM-DD array of delivery dates to skip
+  skipDates: string[]  // YYYY-MM-DD array
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
-
-    const { data: sub, error: subError } = await supabase
-      .from("subscriptions")
-      .select("stripe_subscription_id, delivery_dates, delivery_day")
-      .eq("id", subscriptionId)
-      .single()
-
-    if (subError || !sub) return { error: "Subscription not found" }
 
     if (!skipDates || skipDates.length === 0) {
       return { error: "Please select at least one delivery date to skip." }
     }
 
-    // Normalise dates from delivery_dates (Postgres date[] may come back as
-    // "YYYY-MM-DD" strings; slice to 10 chars just in case of extra chars).
-    const scheduledDates: string[] = ((sub.delivery_dates as string[] | null) ?? [])
-      .map((d: string) => (d.length > 10 ? d.slice(0, 10) : d))
+    const { data: sub, error: subError } = await supabase
+      .from("subscriptions")
+      .select("id, skipped_dates")
+      .eq("id", subscriptionId)
+      .single()
 
-    // Validate every requested skip date is actually a scheduled delivery date.
-    // This prevents off-by-one timezone bugs from allowing wrong dates to be saved.
-    const invalidDates = skipDates.filter((d) => !scheduledDates.includes(d))
-    if (invalidDates.length > 0) {
-      return {
-        error: `Selected date(s) not in this subscription's delivery schedule: ${invalidDates.join(", ")}. Expected one of: ${scheduledDates.join(", ")}`,
-      }
-    }
+    if (subError || !sub) return { error: "Subscription not found" }
 
-    const sorted = [...skipDates].sort()
-    const lastSkipDate = sorted[sorted.length - 1] ?? null
+    const current: string[] = ((sub.skipped_dates as string[] | null) ?? [])
+      .map((d: string) => d.length > 10 ? d.slice(0, 10) : d)
 
-    // Compute resumes_at: day after the last skip date
-    let resumesAt: number | undefined
-    if (lastSkipDate) {
-      const resumeDate = new Date(lastSkipDate + "T12:00:00")
-      resumeDate.setDate(resumeDate.getDate() + 1)
-      resumesAt = Math.floor(resumeDate.getTime() / 1000)
-    }
+    const merged = [...new Set([...current, ...skipDates])].sort()
 
-    // Pause billing on Stripe
-    if (sub.stripe_subscription_id) {
-      await stripe.subscriptions.update(sub.stripe_subscription_id, {
-        pause_collection: {
-          behavior: "keep_as_draft",
-          ...(resumesAt ? { resumes_at: resumesAt } : {}),
-        },
-      })
-    }
-
-    const now = new Date().toISOString()
     const { error: updateError } = await supabase
       .from("subscriptions")
       .update({
-        status: "paused",
-        pause_status: "approved",
-        pause_requested_from: sorted[0] ?? null,
-        pause_requested_until: lastSkipDate,
-        pause_skip_dates: sorted,
-        pause_approved_at: now,
-        stripe_pause_resumes_at: resumesAt ? new Date(resumesAt * 1000).toISOString() : null,
-        updated_at: now,
+        skipped_dates: merged,
+        updated_at: new Date().toISOString(),
       })
       .eq("id", subscriptionId)
 
@@ -1470,7 +1259,47 @@ export async function adminPauseSubscription(
     revalidatePath("/admin")
     return { error: null }
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to pause subscription" }
+    return { error: e instanceof Error ? e.message : "Failed to skip delivery" }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Admin: Unskip a weekly delivery (remove from skipped_dates)
+// ---------------------------------------------------------------------------
+export async function adminUnskipWeeklyDelivery(
+  subscriptionId: string,
+  deliveryDate: string  // YYYY-MM-DD
+): Promise<{ error: string | null }> {
+  try {
+    const { supabase } = await requireAdmin()
+
+    const { data: sub, error: subError } = await supabase
+      .from("subscriptions")
+      .select("id, skipped_dates")
+      .eq("id", subscriptionId)
+      .single()
+
+    if (subError || !sub) return { error: "Subscription not found" }
+
+    const current: string[] = ((sub.skipped_dates as string[] | null) ?? [])
+      .map((d: string) => d.length > 10 ? d.slice(0, 10) : d)
+
+    const newSkipped = current.filter((d) => d !== deliveryDate)
+
+    const { error: updateError } = await supabase
+      .from("subscriptions")
+      .update({
+        skipped_dates: newSkipped,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", subscriptionId)
+
+    if (updateError) return { error: updateError.message }
+
+    revalidatePath("/admin")
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to unskip delivery" }
   }
 }
 
@@ -1582,8 +1411,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
     const { supabase } = await requireAdmin()
 
     // ── 1. Active subscriptions for this delivery day ──────────────────────
-    // Includes paused subs in the fetch so we can check pause_skip_dates,
-    // then filters them out below if this specific date is being skipped.
+    // Fetches active subs and filters out any that have this date in skipped_dates.
     const { data: subs, error: subsError } = await supabase
       .from("subscriptions")
       .select(`
@@ -1591,13 +1419,13 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
         user_id,
         status,
         next_delivery_date,
-        pause_skip_dates,
+        skipped_dates,
         subscription_items (product_name, size, quantity)
       `)
-      .in("status", ["active", "paused"])
+      .in("status", ["active"])
       .eq("delivery_day", deliveryDay)
       .eq("cancel_at_period_end", false)
-      .contains("delivery_dates", [deliveryDate])
+
 
     if (subsError) return { data: [], error: subsError.message }
 
@@ -1640,7 +1468,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
     const profileMap = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]))
 
     // ── 4. Build subscription stops ────────────────────────────────────────
-    // Exclude any subscription that has this specific date in its pause_skip_dates.
+    // Exclude any subscription that has this specific date in its skipped_dates.
     // This handles partial pauses (e.g. skipping 2 of 4 weeks) gracefully.
     // Each sub becomes a partial stop entry keyed by user_id.
     type PartialStop = {
@@ -1666,7 +1494,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
     ;(subs ?? [])
       .filter((s) => {
         if (!profileMap[s.user_id]?.address) return false
-        const skipDates: string[] = (s.pause_skip_dates ?? []).map((d: string) =>
+        const skipDates: string[] = (s.skipped_dates ?? []).map((d: string) =>
           d.length > 10 ? d.slice(0, 10) : d
         )
         return !skipDates.includes(deliveryDate)
