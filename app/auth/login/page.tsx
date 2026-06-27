@@ -1,7 +1,7 @@
 //app/auth/login/page.tsx
-
+ 
 "use client"
-
+ 
 import React from "react"
 import { useState } from "react"
 import Link from "next/link"
@@ -10,36 +10,65 @@ import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Eye, EyeOff } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
-
+ 
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+}
+ 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-
+ 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+ 
+    if (!email.trim()) {
+      setError("Please enter your email address.")
+      return
+    }
+    if (!isValidEmail(email)) {
+      setError("Please enter a valid email address.")
+      return
+    }
+    if (!password) {
+      setError("Please enter your password.")
+      return
+    }
+ 
     setLoading(true)
-
     const supabase = createClient()
-    
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-
-    if (error) {
-      setError(error.message)
+ 
+    const { data: emailExists } = await supabase
+      .rpc("check_email_exists", { lookup_email: email.trim().toLowerCase() })
+ 
+    if (!emailExists) {
+      setError("No account found with that email address. Did you mean to sign up?")
       setLoading(false)
       return
     }
+ 
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    })
+ 
+    if (signInError) {
+      setError("Incorrect password. Please try again, or use \"Forgot password\" below.")
+      setLoading(false)
+      return
+    }
+ 
     router.push("/account")
     router.refresh()
   }
-
+ 
   return (
     <div className="flex min-h-screen">
       {/* Left side - Form */}
@@ -58,14 +87,14 @@ export default function LoginPage() {
               <span className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Plant Based Milks</span>
             </div>
           </Link>
-
+ 
           <h1 className="font-serif text-3xl font-medium tracking-tight text-foreground">
             Welcome back
           </h1>
           <p className="mt-2 text-muted-foreground">
             Sign in to manage your orders/subscription
           </p>
-
+ 
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -79,24 +108,42 @@ export default function LoginPage() {
                 className="border-border/50"
               />
             </div>
-
+ 
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="border-border/50"
-              />
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/auth/forgot-password"
+                  className="text-xs text-muted-foreground hover:text-sage hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="border-border/50 pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
-
+ 
             {error && (
               <p className="text-sm text-destructive">{error}</p>
             )}
-
+ 
             <Button
               type="submit"
               className="w-full bg-foreground text-background hover:bg-foreground/90"
@@ -105,7 +152,7 @@ export default function LoginPage() {
               {loading ? "Signing in..." : "Sign In"}
             </Button>
           </form>
-
+ 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             {"Don't have an account? "}
             <Link href="/auth/sign-up" className="font-medium text-sage hover:underline">
@@ -114,7 +161,7 @@ export default function LoginPage() {
           </p>
         </div>
       </div>
-
+ 
       {/* Right side - Image */}
       <div className="hidden bg-secondary lg:block lg:w-1/2">
         <div className="relative h-full">
