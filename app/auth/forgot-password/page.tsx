@@ -39,16 +39,20 @@ export default function ForgotPasswordPage() {
     const siteUrl =
       process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:4000"
 
+    // redirectTo must go through /auth/callback so the token_hash is exchanged
+    // for a session before the user reaches the reset-password form.
+    // The callback route detects type=recovery and forwards to /auth/reset-password.
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       email.trim().toLowerCase(),
       {
-        redirectTo: `${siteUrl}/auth/reset-password`,
+        redirectTo: `${siteUrl}/auth/callback?next=/auth/reset-password`,
       }
     )
 
     setLoading(false)
 
     if (resetError) {
+      console.error("Reset error:", resetError.message)
       setError("Something went wrong. Please try again.")
       return
     }
@@ -91,7 +95,7 @@ export default function ForgotPasswordPage() {
               Check your email
             </h1>
             <p className="mt-4 text-muted-foreground">
-              If an account exists for <span className="font-medium text-foreground">{email}</span>, 
+              If an account exists for <span className="font-medium text-foreground">{email}</span>,
               we&apos;ve sent a password reset link. Check your inbox (and spam folder).
             </p>
             <div className="mt-8">
@@ -129,7 +133,7 @@ export default function ForgotPasswordPage() {
 
               <Button
                 type="submit"
-                className="w-full bg-foreground text-background hover:bg-foreground/90"
+                className="w-full bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
                 disabled={loading}
               >
                 {loading ? "Sending..." : "Send Reset Link"}

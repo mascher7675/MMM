@@ -250,7 +250,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
             </Link>
           </Button>
           <form action={signOut}>
-            <Button variant="outline" type="submit" className="gap-2 bg-transparent">
+            <Button variant="outline" type="submit" className="gap-2 bg-transparent cursor-pointer">
               <LogOut className="h-4 w-4" />
               Sign Out
             </Button>

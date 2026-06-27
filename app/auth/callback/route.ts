@@ -12,14 +12,23 @@ export async function GET(request: Request) {
 
   const supabase = await createClient()
 
-  // Handle email change / magic link confirmation via token_hash
+  // Handle email change / magic link / password recovery via token_hash
   if (tokenHash && type) {
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: type as any })
     if (!error) {
-      // For email_change, redirect back to settings with a success indicator
-      const redirectPath = type === 'email_change'
-        ? '/account/settings?email_updated=true'
-        : next
+      let redirectPath: string
+
+      if (type === 'email_change') {
+        // Email change confirmed — return to settings with success banner
+        redirectPath = '/account/settings?email_updated=true'
+      } else if (type === 'recovery') {
+        // Password reset — send to the update-password form
+        // The user now has an active session scoped to password reset
+        redirectPath = '/auth/reset-password'
+      } else {
+        redirectPath = next
+      }
+
       return NextResponse.redirect(`${origin}${redirectPath}`)
     }
   }
@@ -32,6 +41,6 @@ export async function GET(request: Request) {
     }
   }
 
-  // Return the user to an error page with instructions
+  // Return the user to an error page
   return NextResponse.redirect(`${origin}/auth/error?message=Could not verify email`)
 }

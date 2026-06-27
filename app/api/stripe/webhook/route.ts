@@ -88,7 +88,9 @@ export async function POST(request: NextRequest) {
 // this runs.
 //
 // Logic:
-//   1. Find the subscription in our DB by stripe_subscription_id.
+//   1. Find the subscription in our DB by stripe_subscription_id via
+//      get_subscription_for_webhook() — a SECURITY DEFINER function that
+//      bypasses RLS so the sessionless webhook request can read the DB.
 //   2. Determine the delivery date for this billing period:
 //      - period_start is always a Friday (universal Friday billing anchor)
 //      - Friday customers: delivery = that same Friday
@@ -111,14 +113,17 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     return
   }
 
+  // Use SECURITY DEFINER RPC functions so the webhook can read/write the DB
+  // without a user session. Direct table access would be blocked by RLS since
+  // Stripe webhook requests have no auth cookie.
   const supabase = await createClient()
 
-  // Look up our subscription record
-  const { data: sub, error: subError } = await supabase
-    .from("subscriptions")
-    .select("id, user_id, delivery_day, skipped_dates, status")
-    .eq("stripe_subscription_id", stripeSubscriptionId)
-    .single()
+  const { data: rows, error: subError } = await supabase
+    .rpc("get_subscription_for_webhook", {
+      p_stripe_subscription_id: stripeSubscriptionId,
+    })
+
+  const sub = rows?.[0] ?? null
 
   if (subError || !sub) {
     console.log(`[webhook] invoice.upcoming: no subscription found for ${stripeSubscriptionId}`)
@@ -194,19 +199,23 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
   // ---------------------------------------------------------------------------
   // Remove the date from skipped_dates after applying the credit.
   // This prevents double-crediting if Stripe retries the event.
+  // Uses SECURITY DEFINER function to bypass RLS for the sessionless webhook.
   // ---------------------------------------------------------------------------
   const newSkippedDates = skippedDates.filter((d) => d !== deliveryDate)
-  await supabase
-    .from("subscriptions")
-    .update({
-      skipped_dates: newSkippedDates,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", sub.id)
 
-  console.log(
-    `[webhook] Credit applied. Removed ${deliveryDate} from skipped_dates for sub ${sub.id}`
-  )
+  const { error: updateError } = await supabase
+    .rpc("update_subscription_skipped_dates", {
+      p_subscription_id: sub.id,
+      p_skipped_dates: newSkippedDates,
+    })
+
+  if (updateError) {
+    console.error(`[webhook] Failed to update skipped_dates for sub ${sub.id}:`, updateError.message)
+  } else {
+    console.log(
+      `[webhook] Credit applied. Removed ${deliveryDate} from skipped_dates for sub ${sub.id}`
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
-//app/auth/sign-up/page.tsx
- 
+// app/auth/sign-up/page.tsx
+
 "use client"
- 
+
 import React, { useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
@@ -11,18 +11,18 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Eye, EyeOff } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
- 
+
 function formatPhoneNumber(digits: string): string {
   const d = digits.slice(0, 10)
   if (d.length <= 3) return d.length ? `(${d}` : ""
   if (d.length <= 6) return `(${d.slice(0, 3)})-${d.slice(3)}`
   return `(${d.slice(0, 3)})-${d.slice(3, 6)}-${d.slice(6)}`
 }
- 
+
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
 }
- 
+
 function validatePassword(password: string): string | null {
   if (!password || !password.trim()) return "Password is required."
   if (password.length < 8) return "Password must be at least 8 characters."
@@ -32,7 +32,7 @@ function validatePassword(password: string): string | null {
     return "Password must include at least one special character."
   return null
 }
- 
+
 interface FieldErrors {
   firstName?: string
   lastName?: string
@@ -40,7 +40,7 @@ interface FieldErrors {
   phone?: string
   password?: string
 }
- 
+
 export default function SignUpPage() {
   const [firstName, setFirstName] = useState("")
   const [lastName, setLastName] = useState("")
@@ -52,7 +52,7 @@ export default function SignUpPage() {
   const [generalError, setGeneralError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
- 
+
   function handlePhoneChange(e: React.ChangeEvent<HTMLInputElement>) {
     const digits = e.target.value.replace(/\D/g, "").slice(0, 10)
     setPhone(formatPhoneNumber(digits))
@@ -60,67 +60,83 @@ export default function SignUpPage() {
       setFieldErrors((prev) => ({ ...prev, phone: undefined }))
     }
   }
- 
+
   function clearFieldError(field: keyof FieldErrors) {
     if (fieldErrors[field]) {
       setFieldErrors((prev) => ({ ...prev, [field]: undefined }))
     }
   }
- 
+
   function validate(): boolean {
     const errors: FieldErrors = {}
- 
+
     if (!firstName.trim()) errors.firstName = "First name is required."
     if (!lastName.trim()) errors.lastName = "Last name is required."
- 
+
     if (!email.trim()) {
       errors.email = "Email address is required."
     } else if (!isValidEmail(email)) {
       errors.email = "Please enter a valid email address."
     }
- 
+
     const phoneDigits = phone.replace(/\D/g, "")
     if (!phone.trim()) {
       errors.phone = "Phone number is required."
     } else if (phoneDigits.length !== 10) {
       errors.phone = "Phone number must be 10 digits."
     }
- 
+
     if (!password.trim()) {
       errors.password = "Password is required."
     } else {
       const passwordError = validatePassword(password)
       if (passwordError) errors.password = passwordError
     }
- 
+
     setFieldErrors(errors)
     return Object.keys(errors).length === 0
   }
- 
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setGeneralError(null)
- 
+
     if (!validate()) return
- 
+
     setLoading(true)
- 
+
     const supabase = createClient()
+
+    // Check for duplicate email before attempting signup.
+    // Supabase silently "succeeds" on duplicate emails to prevent enumeration,
+    // so we pre-check using our SECURITY DEFINER function.
+    const { data: emailExists } = await supabase
+      .rpc("check_email_exists", { lookup_email: email.trim().toLowerCase() })
+
+    if (emailExists) {
+      setFieldErrors((prev) => ({
+        ...prev,
+        email: "An account with this email already exists. Did you mean to sign in?",
+      }))
+      setLoading(false)
+      return
+    }
+
     const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
+      email: email.trim(),
       password,
       options: {
         emailRedirectTo:
           process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
-          `${window.location.origin}/account`,
+          `${window.location.origin}/auth/callback`,
         data: {
-          first_name: firstName,
-          last_name: lastName,
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
           phone: phone.trim(),
         },
       },
     })
- 
+
     if (signUpError) {
       const msg = signUpError.message.toLowerCase()
       if (
@@ -130,7 +146,7 @@ export default function SignUpPage() {
       ) {
         setFieldErrors((prev) => ({
           ...prev,
-          email: "This email is already associated with an account.",
+          email: "An account with this email already exists. Did you mean to sign in?",
         }))
       } else {
         setGeneralError(signUpError.message)
@@ -138,7 +154,7 @@ export default function SignUpPage() {
       setLoading(false)
       return
     }
- 
+
     // Write phone to the profile row directly (trigger only sets name/email)
     if (data.user) {
       await supabase
@@ -146,10 +162,10 @@ export default function SignUpPage() {
         .update({ phone: phone.trim() })
         .eq("id", data.user.id)
     }
- 
+
     router.push("/auth/sign-up-success")
   }
- 
+
   return (
     <div className="flex min-h-screen">
       {/* Left side - Form */}
@@ -168,30 +184,30 @@ export default function SignUpPage() {
               <span className="text-sm uppercase tracking-[0.2em] text-muted-foreground">Plant Based Milks</span>
             </div>
           </Link>
- 
+
           <h1 className="font-serif text-3xl font-medium tracking-tight text-foreground">
             Create an account
           </h1>
           <p className="mt-2 text-muted-foreground">
             Join our North Fork milk delivery community
           </p>
- 
+
           <form onSubmit={handleSubmit} className="mt-8 space-y-4" noValidate>
- 
+
             {/* General error */}
             {generalError && (
               <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                 {generalError}
               </div>
             )}
- 
+
             {/* First / Last name */}
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="firstName">First name</Label>
                 <Input
                   id="firstName"
-                  placeholder="Jane"
+                  placeholder="First name"
                   value={firstName}
                   onChange={(e) => { setFirstName(e.target.value); clearFieldError("firstName") }}
                   className={fieldErrors.firstName ? "border-destructive focus-visible:ring-destructive" : "border-border/50"}
@@ -204,7 +220,7 @@ export default function SignUpPage() {
                 <Label htmlFor="lastName">Last name</Label>
                 <Input
                   id="lastName"
-                  placeholder="Doe"
+                  placeholder="Last name"
                   value={lastName}
                   onChange={(e) => { setLastName(e.target.value); clearFieldError("lastName") }}
                   className={fieldErrors.lastName ? "border-destructive focus-visible:ring-destructive" : "border-border/50"}
@@ -214,14 +230,14 @@ export default function SignUpPage() {
                 )}
               </div>
             </div>
- 
+
             {/* Phone */}
             <div className="space-y-1">
               <Label htmlFor="phone">Phone number</Label>
               <Input
                 id="phone"
                 type="tel"
-                placeholder="(631)-555-1234"
+                placeholder="(555) 123-4567"
                 value={phone}
                 onChange={handlePhoneChange}
                 inputMode="numeric"
@@ -232,7 +248,7 @@ export default function SignUpPage() {
                 <p className="text-xs text-destructive">{fieldErrors.phone}</p>
               )}
             </div>
- 
+
             {/* Email */}
             <div className="space-y-1">
               <Label htmlFor="email">Email</Label>
@@ -248,7 +264,7 @@ export default function SignUpPage() {
                 <p className="text-xs text-destructive">{fieldErrors.email}</p>
               )}
             </div>
- 
+
             {/* Password */}
             <div className="space-y-1">
               <Label htmlFor="password">Password</Label>
@@ -274,16 +290,16 @@ export default function SignUpPage() {
                 <p className="text-xs text-destructive">{fieldErrors.password}</p>
               )}
             </div>
- 
+
             <Button
               type="submit"
-              className="w-full bg-foreground text-background hover:bg-foreground/90"
+              className="w-full bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
               disabled={loading}
             >
               {loading ? "Creating account…" : "Create Account"}
             </Button>
           </form>
- 
+
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Already have an account?{" "}
             <Link href="/auth/login" className="font-medium text-sage hover:underline">
@@ -292,7 +308,7 @@ export default function SignUpPage() {
           </p>
         </div>
       </div>
- 
+
       {/* Right side - Image */}
       <div className="hidden bg-secondary lg:block lg:w-1/2">
         <div className="relative h-full">

@@ -88,6 +88,43 @@ export async function signUp(formData: FormData) {
 }
 
 /**
+ * Sends a password-reset email via Supabase Auth.
+ * Always redirects to a "check your email" page — never reveals whether
+ * the address is registered (prevents email enumeration).
+ */
+export async function requestPasswordReset(
+  formData: FormData
+): Promise<{ error: string | null }> {
+  const email = (formData.get("email") as string)?.trim().toLowerCase()
+
+  if (!email) {
+    return { error: "Please enter your email address." }
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailRegex.test(email)) {
+    return { error: "Please enter a valid email address." }
+  }
+
+  const supabase = await createClient()
+
+  // Always call resetPasswordForEmail — Supabase silently no-ops if the email
+  // is not registered, so we never leak whether an account exists.
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo:
+      process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
+      `${process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:4000"}/auth/callback?next=/auth/update-password`,
+  })
+
+  if (error) {
+    console.error("Password reset error:", error)
+    return { error: "Something went wrong. Please try again." }
+  }
+
+  return { error: null }
+}
+
+/**
  * Verifies the user's current password by attempting a sign-in.
  * Used as a re-authentication step before sensitive account changes.
  */

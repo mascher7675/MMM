@@ -45,22 +45,25 @@ export default function LoginPage() {
     setLoading(true)
     const supabase = createClient()
  
-    const { data: emailExists } = await supabase
-      .rpc("check_email_exists", { lookup_email: email.trim().toLowerCase() })
- 
-    if (!emailExists) {
-      setError("No account found with that email address. Did you mean to sign up?")
-      setLoading(false)
-      return
-    }
- 
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     })
  
     if (signInError) {
-      setError("Incorrect password. Please try again, or use \"Forgot password\" below.")
+      console.log("Supabase error:", signInError.message, signInError)
+      const msg = signInError.message.toLowerCase()
+ 
+      if (msg.includes("email not confirmed")) {
+        setError("Please confirm your email address before signing in. Check your inbox for a confirmation link.")
+      } else if (msg.includes("invalid login credentials") || msg.includes("invalid credentials")) {
+        setError("Incorrect email or password. Please try again, or use \"Forgot password\" below.")
+      } else if (msg.includes("too many requests") || msg.includes("rate limit")) {
+        setError("Too many sign-in attempts. Please wait a few minutes and try again.")
+      } else {
+        setError("Something went wrong. Please try again.")
+      }
+ 
       setLoading(false)
       return
     }
@@ -146,7 +149,7 @@ export default function LoginPage() {
  
             <Button
               type="submit"
-              className="w-full bg-foreground text-background hover:bg-foreground/90"
+              className="w-full bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
               disabled={loading}
             >
               {loading ? "Signing in..." : "Sign In"}
