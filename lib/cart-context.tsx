@@ -1,5 +1,5 @@
 //lib/cart-context.tsx
-
+ 
 "use client"
  
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
@@ -26,6 +26,8 @@ interface CartContextType {
   setIsOpen: (open: boolean) => void
   /** null when cart is empty, "mixed" when both types are present */
   cartType: "subscription_only" | "one_time_only" | "mixed" | null
+  /** true once localStorage has been read — use to avoid hydration mismatches */
+  isLoaded: boolean
 }
  
 const CartContext = createContext<CartContextType | undefined>(undefined)
@@ -130,6 +132,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         isOpen,
         setIsOpen,
         cartType,
+        isLoaded,
       }}
     >
       {children}

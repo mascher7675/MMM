@@ -1,5 +1,5 @@
 //components/cart-drawer.tsx
-
+ 
 "use client"
  
 import { useCart } from "@/lib/cart-context"
@@ -15,11 +15,16 @@ import Image from "next/image"
 import Link from "next/link"
  
 export function CartDrawer() {
-  const { items, isOpen, setIsOpen, removeItem, updateQuantity, totalPriceInCents, totalItems } = useCart()
+  const { items, isOpen, setIsOpen, removeItem, updateQuantity, totalPriceInCents, totalItems, isLoaded } = useCart()
  
   const formatPrice = (cents: number) => {
     return `$${(cents / 100).toFixed(2)}`
   }
+ 
+  // Don't render cart contents until localStorage has been read on the client.
+  // This prevents the server-rendered empty cart from mismatching the
+  // client-hydrated cart, which is the most common source of hydration errors.
+  if (!isLoaded) return null
  
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
@@ -114,7 +119,7 @@ export function CartDrawer() {
               </div>
               
               <p className="px-2 text-center text-xs text-muted-foreground">
-                (Delivery included & tax free)
+                Delivery included
               </p>
               
               <div className="space-y-3 px-2">
@@ -138,7 +143,7 @@ export function CartDrawer() {
 }
  
 export function CartButton() {
-  const { setIsOpen, totalItems } = useCart()
+  const { setIsOpen, totalItems, isLoaded } = useCart()
  
   return (
     <button
@@ -147,7 +152,7 @@ export function CartButton() {
       aria-label="Open cart"
     >
       <ShoppingBag className="h-5 w-5" />
-      {totalItems > 0 && (
+      {isLoaded && totalItems > 0 && (
         <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-sage text-xs font-medium text-sage-foreground">
           {totalItems > 9 ? "9+" : totalItems}
         </span>

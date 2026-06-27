@@ -1,20 +1,22 @@
 //components/product-card.tsx
-
+ 
 "use client"
-
+ 
 import { useState } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/lib/cart-context"
 import { Check } from "lucide-react"
 import { PRODUCTS } from "@/lib/products"
-
+ 
 interface ProductCardProps {
-  milkType: "oat" | "almond" | "hemp"
+  milkType: "oat" | "almond" | "hemp" | "cashew"
   isSubscription: boolean
+  /** Override the accent color. Defaults to the milkType's natural color. */
+  accentColor?: "green" | "blue"
 }
-
-export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
+ 
+export function ProductCard({ milkType, isSubscription, accentColor }: ProductCardProps) {
   const productsForType = PRODUCTS.filter(p => p.milkType === milkType)
   const [selectedSize, setSelectedSize] = useState<"16oz" | "32oz">("16oz")
   const [justAdded, setJustAdded] = useState(false)
@@ -24,38 +26,25 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
   const product32 = productsForType.find(p => p.size === "32oz")
   
   if (!product16 || !product32) return null
-
+ 
   const selectedProduct = selectedSize === "16oz" ? product16 : product32
   const price = isSubscription ? selectedProduct.subscriptionPriceInCents : selectedProduct.priceInCents
   const weeklyPrice = isSubscription ? selectedProduct.priceInCents : null
-
-  const colorClasses = {
-    oat: "border-sage/20 hover:border-sage/40",
-    almond: "border-blue/20 hover:border-blue/40",
-    hemp: "border-sage/20 hover:border-sage/40",
-  }
-
-  const buttonColorClasses = {
-    oat: "bg-sage text-sage-foreground hover:bg-sage/90",
-    almond: "bg-blue text-blue-foreground hover:bg-blue/90",
-    hemp: "bg-sage text-sage-foreground hover:bg-sage/90",
-  }
-
-  const sizeButtonClasses = {
-    oat: {
-      active: "border-sage bg-sage/10 text-sage font-medium",
-      inactive: "border-border bg-background text-muted-foreground hover:border-sage/50",
-    },
-    almond: {
-      active: "border-blue bg-blue/10 text-blue font-medium",
-      inactive: "border-border bg-background text-muted-foreground hover:border-blue/50",
-    },
-    hemp: {
-      active: "border-sage bg-sage/10 text-sage font-medium",
-      inactive: "border-border bg-background text-muted-foreground hover:border-sage/50",
-    },
-  }
-
+  const monthlyPrice = weeklyPrice ? weeklyPrice * 4 : null
+ 
+  // Natural color per milk type (mobile default): oat=green, almond=blue, hemp=green, cashew=blue
+  const naturalColor: "green" | "blue" = 
+    milkType === "almond" || milkType === "cashew" ? "blue" : "green"
+ 
+  const color = accentColor ?? naturalColor
+ 
+  const borderClass       = color === "green" ? "border-sage/20 hover:border-sage/40"  : "border-blue/20 hover:border-blue/40"
+  const buttonClass       = color === "green" ? "bg-sage text-sage-foreground hover:bg-sage/90" : "bg-blue text-blue-foreground hover:bg-blue/90"
+  const sizeActiveClass   = color === "green" ? "border-sage bg-sage/10 text-sage font-medium"  : "border-blue bg-blue/10 text-blue font-medium"
+  const sizeInactiveClass = color === "green"
+    ? "border-border bg-background text-muted-foreground hover:border-sage/50"
+    : "border-border bg-background text-muted-foreground hover:border-blue/50"
+ 
   const handleAddToCart = () => {
     addItem({
       productId: selectedProduct.id,
@@ -66,13 +55,12 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
       isSubscription,
       quantity: 1,
     })
-    
     setJustAdded(true)
     setTimeout(() => setJustAdded(false), 2000)
   }
-
+ 
   return (
-    <div className={`group overflow-hidden rounded-lg border bg-card transition-all ${colorClasses[milkType]}`}>
+    <div className={`group flex h-full flex-col overflow-hidden rounded-lg border bg-card transition-all ${borderClass}`}>
       {/* Image */}
       <div className="relative aspect-4/3 overflow-hidden bg-secondary">
         <Image
@@ -82,18 +70,18 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
           className="object-cover transition-transform duration-300 group-hover:scale-105"
         />
       </div>
-
+ 
       {/* Content */}
-      <div className="p-5">
+      <div className="flex flex-1 flex-col p-5">
         <h3 className="font-serif text-xl font-medium text-foreground">
           {selectedProduct.name.split(' - ')[0]}
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
           {selectedProduct.description}
         </p>
-
-        {/* Size Selection */}
-        <div className="mt-4">
+ 
+        {/* Size Selection — mt-auto pushes everything below the description to the bottom */}
+        <div className="mt-auto pt-4">
           <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Select Size
           </p>
@@ -101,9 +89,7 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
             <button
               onClick={() => setSelectedSize("16oz")}
               className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
-                selectedSize === "16oz"
-                  ? sizeButtonClasses[milkType].active
-                  : sizeButtonClasses[milkType].inactive
+                selectedSize === "16oz" ? sizeActiveClass : sizeInactiveClass
               }`}
             >
               <span className="block">16oz</span>
@@ -114,9 +100,7 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
             <button
               onClick={() => setSelectedSize("32oz")}
               className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
-                selectedSize === "32oz"
-                  ? sizeButtonClasses[milkType].active
-                  : sizeButtonClasses[milkType].inactive
+                selectedSize === "32oz" ? sizeActiveClass : sizeInactiveClass
               }`}
             >
               <span className="block">32oz</span>
@@ -126,7 +110,7 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
             </button>
           </div>
         </div>
-
+ 
         {/* Price and Add Button */}
         <div className="mt-5">
           {isSubscription ? (
@@ -138,7 +122,7 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
                 <p className="text-sm text-muted-foreground">per week</p>
               </div>
               <p className="text-xs text-muted-foreground">
-                ${(price / 100).toFixed(2)}/month
+                ${(monthlyPrice! / 100).toFixed(2)}/month
               </p>
             </div>
           ) : (
@@ -150,8 +134,8 @@ export function ProductCard({ milkType, isSubscription }: ProductCardProps) {
             </div>
           )}
           
-          <Button 
-            className={`w-full ${buttonColorClasses[milkType]}`}
+          <Button
+            className={`w-full ${buttonClass}`}
             onClick={handleAddToCart}
           >
             {justAdded ? (

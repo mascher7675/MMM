@@ -1,5 +1,5 @@
 //app/subscribe/page.tsx
-
+ 
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
 import { ProductCard } from "@/components/product-card"
@@ -7,14 +7,14 @@ import { CashCustomerBanner } from "@/components/cash-customer-banner"
 import { Button } from "@/components/ui/button"
 import { Check, Calendar } from "lucide-react"
 import Link from "next/link"
-
+ 
 const benefits = [
   "Fresh milk delivered weekly to your door",
   "Cancel anytime, no commitment",
   "Free jar return & reuse program",
   "Billed monthly for convenience",
 ]
-
+ 
 export default function SubscribePage() {
   return (
     <div className="flex min-h-screen flex-col">
@@ -35,7 +35,7 @@ export default function SubscribePage() {
                 Choose your delivery day and cancel anytime.
               </p>
             </div>
-
+ 
             {/* Delivery Days Notice */}
             <div className="mx-auto mt-8 max-w-xl">
               <div className="flex items-center justify-center gap-3 rounded-lg border border-sage/20 bg-sage/5 p-4">
@@ -47,7 +47,7 @@ export default function SubscribePage() {
             </div>
           </div>
         </section>
-
+ 
         {/* Products Grid */}
         <section className="bg-background py-16 md:py-20">
           <div className="mx-auto max-w-6xl px-4 md:px-6">
@@ -57,13 +57,15 @@ export default function SubscribePage() {
             <p className="mt-2 text-muted-foreground">
               Select your weekly milk delivery. Billed monthly.
             </p>
-
-            <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-              <ProductCard milkType="oat" isSubscription />
-              <ProductCard milkType="almond" isSubscription />
-              <ProductCard milkType="hemp" isSubscription />
+ 
+            <div className="mt-10 grid gap-8 sm:grid-cols-2">
+              {/* Mobile: green/blue/green/blue — Desktop: green/blue/blue/green */}
+              <ProductCard milkType="oat"    isSubscription accentColor="green" />
+              <ProductCard milkType="almond" isSubscription accentColor="blue"  />
+              <ProductCard milkType="hemp"   isSubscription accentColor="blue"  />
+              <ProductCard milkType="cashew" isSubscription accentColor="green" />
             </div>
-
+ 
             {/* Cash customer callout */}
             <CashCustomerBanner />
           </div>

@@ -1,7 +1,7 @@
 //app/shop/page.tsx
-
+ 
 "use client"
-
+ 
 import { useEffect, useState } from "react"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
@@ -11,20 +11,19 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
-
+ 
 export default function ShopPage() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-
+ 
   useEffect(() => {
     const supabase = createClient()
-    
     supabase.auth.getUser().then(({ data: { user } }) => {
       setUser(user)
       setLoading(false)
     })
   }, [])
-
+ 
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
@@ -44,7 +43,7 @@ export default function ShopPage() {
                 No commitment required.
               </p>
             </div>
-
+ 
             {/* Delivery Days Notice */}
             <div className="mx-auto mt-8 max-w-xl">
               <div className="flex items-center justify-center gap-3 rounded-lg border border-sage/20 bg-sage/5 p-4">
@@ -54,7 +53,7 @@ export default function ShopPage() {
                 </p>
               </div>
             </div>
-
+ 
             {/* Subscription upsell */}
             <div className="mx-auto mt-10 max-w-xl">
               <div className="rounded-lg border border-border bg-background p-6 text-center">
@@ -68,7 +67,7 @@ export default function ShopPage() {
             </div>
           </div>
         </section>
-
+ 
         {/* Products Grid */}
         <section className="bg-background py-16 md:py-20">
           <div className="mx-auto max-w-6xl px-4 md:px-6">
@@ -78,13 +77,15 @@ export default function ShopPage() {
             <p className="mt-2 text-muted-foreground">
               Fresh, handcrafted non-dairy milk in reusable glass jars.
             </p>
-
-            <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-              <ProductCard milkType="oat" isSubscription={false} />
-              <ProductCard milkType="almond" isSubscription={false} />
-              <ProductCard milkType="hemp" isSubscription={false} />
+ 
+            <div className="mt-10 grid gap-8 sm:grid-cols-2">
+              {/* Mobile: green/blue/green/blue — Desktop: green/blue/blue/green */}
+              <ProductCard milkType="oat"    isSubscription={false} accentColor="green" />
+              <ProductCard milkType="almond" isSubscription={false} accentColor="blue"  />
+              <ProductCard milkType="hemp"   isSubscription={false} accentColor="blue"  />
+              <ProductCard milkType="cashew" isSubscription={false} accentColor="green" />
             </div>
-
+ 
             {!loading && !user && (
               <div className="mt-12 text-center">
                 <p className="mb-4 text-sm text-muted-foreground">
@@ -95,7 +96,7 @@ export default function ShopPage() {
                 </Button>
               </div>
             )}
-
+ 
             {/* Cash customer callout */}
             <CashCustomerBanner />
           </div>

@@ -1,10 +1,10 @@
 //components/products-preview.tsx
-
+ 
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { ArrowRight } from "lucide-react"
-
+ 
 const milks = [
   {
     name: "Oat Milk",
@@ -24,8 +24,14 @@ const milks = [
     image: "/images/closeup-emilywithjar.jpg",
     price: "From $12",
   },
+  {
+    name: "Cashew Milk",
+    description: "Rich & velvety smooth",
+    image: "/images/closeup-emilywithjar.jpg",
+    price: "From $12",
+  },
 ]
-
+ 
 export function ProductsPreview() {
   return (
     <section className="bg-background py-20 md:py-28">
@@ -48,8 +54,8 @@ export function ProductsPreview() {
             </Link>
           </Button>
         </div>
-
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
+ 
+        <div className="mt-12 grid gap-6 sm:grid-cols-2 md:grid-cols-4">
           {milks.map((milk) => (
             <Link
               key={milk.name}
