@@ -9,7 +9,7 @@ import {
   adminUpdateSubscriptionStatus,
 } from "@/app/actions/admin"
 import { fmt, fmtDate, STATUS_COLORS } from "./admin-types"
-import { computeDeliveryDates } from "@/lib/delivery-utils"
+import { computeDeliveryDates, computeNextDeliveryDate } from "@/lib/delivery-utils"
 import type { AdminSubscription } from "@/app/actions/admin"
 
 interface Props {
@@ -257,10 +257,10 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                {sub.next_delivery_date && (
+                {sub.status === "active" && (
                   <div className="hidden text-right sm:block">
                     <p className="text-xs text-muted-foreground">Next delivery</p>
-                    <p className="text-sm font-medium">{fmtDate(sub.next_delivery_date)}</p>
+                    <p className="text-sm font-medium">{fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))}</p>
                   </div>
                 )}
                 {isOpen ? (

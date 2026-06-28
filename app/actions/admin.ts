@@ -123,7 +123,6 @@ export interface AdminSubscription {
   current_period_end: string | null
   final_delivery_date: string | null
   stripe_subscription_id: string | null
-  next_delivery_date: string | null
   skipped_dates: string[] | null
   created_at: string
   customer_name?: string
@@ -187,7 +186,6 @@ export interface DeliveryStop {
   subscriptionId: string
   /** All subscription/order IDs contributing to this stop */
   sourceIds: string[]
-  nextDeliveryDate: string | null
   isCashCustomer: boolean
   routePosition: number | null
   /** true if ALL sources are one-time orders (no subscription) */
@@ -357,7 +355,6 @@ export async function createCashCustomer(data: {
           user_id: profile.id,
           status: "active",
           delivery_day: deliveryDay,
-          next_delivery_date: nextDeliveryDate,
           skipped_dates: [],
           cancel_at_period_end: false,
           created_at: new Date().toISOString(),
@@ -714,7 +711,6 @@ export async function addSubscriptionToCashCustomer(
         user_id: customerId,
         status: "active",
         delivery_day: deliveryDay,
-        next_delivery_date: nextDeliveryDate,
         skipped_dates: [],
         cancel_at_period_end: false,
         created_at: new Date().toISOString(),
@@ -865,13 +861,12 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
     // Fetch subscriptions to get delivery info and current items
     const { data: subs } = await supabase
       .from("subscriptions")
-      .select("user_id, stripe_subscription_id, delivery_day, next_delivery_date, final_delivery_date, cancel_at_period_end, status, subscription_items(id, product_id, product_name, size, quantity, price_cents)")
+      .select("user_id, stripe_subscription_id, delivery_day, final_delivery_date, cancel_at_period_end, status, subscription_items(id, product_id, product_name, size, quantity, price_cents)")
       .in("user_id", userIds)
 
     // Map user_id -> subscription info (prefer active, fall back to most recent)
     type SubMapEntry = {
-      next_delivery_date: string | null
-          final_delivery_date: string | null
+      final_delivery_date: string | null
       cancel_at_period_end: boolean
       delivery_day: string | null
       stripe_subscription_id: string | null
@@ -880,13 +875,9 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
     const subMap: Record<string, SubMapEntry> = {}
     for (const s of subs ?? []) {
       const existing = subMap[s.user_id]
-      // Prefer active subscriptions; among equal status prefer earlier next_delivery_date
+      // Prefer active subscriptions over cancelled/inactive
       if (!existing || (s.status === "active" && existing.cancel_at_period_end !== false)) {
         subMap[s.user_id] = {
-          // Compute dynamically from delivery_day so it's always current, not stale DB value
-          next_delivery_date: (s.delivery_day === "thursday" || s.delivery_day === "friday")
-            ? computeNextDeliveryDate(s.delivery_day)
-            : s.next_delivery_date,
           final_delivery_date: s.final_delivery_date,
           cancel_at_period_end: s.cancel_at_period_end ?? false,
           delivery_day: s.delivery_day ?? null,
@@ -929,7 +920,9 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
         ? (subMap[o.user_id].subscription_items as { id: string; product_id: string; product_name: string; size: string; quantity: number; price_cents: number }[])
         : (o.order_items ?? []),
       delivery_logs: logsMap[o.id] ?? [],
-      subscription_next_delivery_date: o.order_type === "subscription" ? (subMap[o.user_id]?.next_delivery_date ?? null) : null,
+      subscription_next_delivery_date: o.order_type === "subscription" && subMap[o.user_id]?.delivery_day
+        ? computeNextDeliveryDate(subMap[o.user_id].delivery_day as "thursday" | "friday")
+        : null,
       subscription_final_delivery_date: o.order_type === "subscription" ? (subMap[o.user_id]?.final_delivery_date ?? null) : null,
       subscription_cancel_at_period_end: o.order_type === "subscription" ? (subMap[o.user_id]?.cancel_at_period_end ?? null) : null,
       stripe_subscription_id: o.order_type === "subscription" ? (subMap[o.user_id]?.stripe_subscription_id ?? null) : null,
@@ -1203,10 +1196,6 @@ export async function getAdminSubscriptions(): Promise<{ data: AdminSubscription
       customer_email: profileMap[s.user_id]?.email || "",
       subscription_items: s.subscription_items ?? [],
       skipped_dates: ((s.skipped_dates as string[] | null) ?? []).map((d: string) => d.length > 10 ? d.slice(0, 10) : d),
-      // Always compute next_delivery_date dynamically so stale DB values don't show wrong dates
-      next_delivery_date: (s.delivery_day === "thursday" || s.delivery_day === "friday")
-        ? computeNextDeliveryDate(s.delivery_day)
-        : s.next_delivery_date,
     }))
 
     return { data: enriched as AdminSubscription[], error: null }
@@ -1418,7 +1407,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
         id,
         user_id,
         status,
-        next_delivery_date,
         skipped_dates,
         subscription_items (product_name, size, quantity)
       `)
@@ -1482,7 +1470,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
       adminNotes: string | null
       items: { name: string; quantity: number; size: string }[]
       sourceId: string
-      nextDeliveryDate: string | null
       isCashCustomer: boolean
       routePosition: number | null
       isOneTime: boolean
@@ -1516,7 +1503,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
             size: i.size,
           })),
           sourceId: s.id,
-          nextDeliveryDate: s.next_delivery_date,
           isCashCustomer: p?.is_cash_customer ?? false,
           routePosition: p?.route_position ?? null,
           isOneTime: false,
@@ -1546,7 +1532,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
             size: i.size,
           })),
           sourceId: o.id,
-          nextDeliveryDate: o.placed_at,
           isCashCustomer: p?.is_cash_customer ?? false,
           routePosition: p?.route_position ?? null,
           isOneTime: true,
@@ -1574,7 +1559,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           items: [...partial.items],
           subscriptionId: partial.sourceId,
           sourceIds: [partial.sourceId],
-          nextDeliveryDate: partial.nextDeliveryDate,
           isCashCustomer: partial.isCashCustomer,
           routePosition: partial.routePosition,
           isOneTime: partial.isOneTime,
