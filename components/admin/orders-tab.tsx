@@ -40,18 +40,10 @@ function getSubscriptionDeliveryDates(placedAt: string): string[] {
 }
 
 /**
- * Resolve the 4 delivery dates for a subscription order.
- * Prefers the explicitly stored subscription_delivery_dates (which stay accurate
- * even after the user changes their delivery day), and falls back to computing
- * them from placed_at for older orders that pre-date the delivery_dates column.
+ * Resolve the 4 delivery dates for a subscription order from placed_at.
+ * placed_at is the first delivery date; subsequent deliveries are weekly.
  */
 function resolveDeliveryDates(order: AdminOrder): string[] {
-  if (
-    Array.isArray(order.subscription_delivery_dates) &&
-    order.subscription_delivery_dates.length > 0
-  ) {
-    return order.subscription_delivery_dates
-  }
   if (order.placed_at) {
     return getSubscriptionDeliveryDates(order.placed_at)
   }
