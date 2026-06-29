@@ -332,24 +332,20 @@ export async function createBillingPortalSession(
     // Verify the subscription belongs to this user
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
-      .select("stripe_subscription_id, stripe_customer_id")
+      .select("stripe_subscription_id")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
 
     if (subError || !sub) return { url: null, error: "Subscription not found" }
 
-    // Try to get customer ID from subscription, then fall back to profile
-    let stripeCustomerId = sub.stripe_customer_id
-
-    if (!stripeCustomerId) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("stripe_customer_id")
-        .eq("id", user.id)
-        .single()
-      stripeCustomerId = profile?.stripe_customer_id
-    }
+    // stripe_customer_id lives on the profile, not the subscription
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("stripe_customer_id")
+      .eq("id", user.id)
+      .single()
+    const stripeCustomerId = profile?.stripe_customer_id
 
     if (!stripeCustomerId) {
       return { url: null, error: "No billing account found. Please contact support." }

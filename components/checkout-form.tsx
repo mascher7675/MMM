@@ -203,7 +203,7 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
           ← Edit delivery address
         </button>
 
-        <div id="checkout" className="min-h-[400px]">
+        <div id="checkout" className="min-h-100">
           <EmbeddedCheckoutProvider
             stripe={stripePromise}
             options={{ fetchClientSecret: fetchSimpleSecret }}
@@ -255,7 +255,7 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
               </>
             ) : (
               <>
-                <span className="font-medium text-sage">✓ Subscription confirmed.</span>{" "}
+                <span className="font-medium text-sage">Subscription confirmed.</span>{" "}
                 Now completing payment for{" "}
                 <span className="font-medium text-foreground">
                   {oneTimeItems.length} one-time item
@@ -269,7 +269,7 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
       </div>
 
       {paymentPhase === "subscription" && (
-        <div id="checkout-subscription" className="min-h-[400px]">
+        <div id="checkout-subscription" className="min-h-100">
           <EmbeddedCheckoutProvider
             stripe={stripePromise}
             options={{ fetchClientSecret: fetchSubscriptionSecret }}
@@ -280,7 +280,7 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
       )}
 
       {paymentPhase === "one_time" && (
-        <div id="checkout-onetime" className="min-h-[400px]">
+        <div id="checkout-onetime" className="min-h-100">
           <EmbeddedCheckoutProvider
             stripe={stripePromise}
             options={{ fetchClientSecret: fetchOneTimeSecret }}

@@ -118,6 +118,7 @@ function getCutoffLabel(order: Order): string {
  
 export function AccountDashboard({ user, profile, subscriptions, orders }: AccountDashboardProps) {
   const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
+  const [showAllOrders, setShowAllOrders] = useState(false)
  
   // Refund request state per order
   const [refundOpen, setRefundOpen]       = useState<Set<string>>(new Set())
@@ -295,7 +296,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
               </div>
             ) : (
               <div className="space-y-4">
-                {orders.slice(0, 5).map((order) => {
+                {orders.slice(0, showAllOrders ? orders.length : 5).map((order) => {
                   const isExpanded    = expandedOrders.has(order.id)
                   const deliveryBadge = getDeliveryBadge(order)
                   const totalQty      = order.order_items?.reduce((sum, i) => sum + (i.quantity || 0), 0) ?? 0
@@ -561,8 +562,14 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                   )
                 })}
                 {orders.length > 5 && (
-                  <Button variant="outline" className="w-full bg-transparent">
-                    View All Orders ({orders.length})
+                  <Button
+                    variant="outline"
+                    className="w-full bg-transparent"
+                    onClick={() => setShowAllOrders((v) => !v)}
+                  >
+                    {showAllOrders
+                      ? "Show Less"
+                      : `View All Orders (${orders.length})`}
                   </Button>
                 )}
               </div>
