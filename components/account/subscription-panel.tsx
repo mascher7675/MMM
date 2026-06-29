@@ -776,14 +776,14 @@ function SingleSubscriptionCard({
                       {item.product_name}
                     </p>
                   )}
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-3 items-stretch">
                     {MILK_OPTIONS.map(({ type, label }) => (
                       <button
                         key={type}
                         type="button"
                         disabled={isMilkLocked || isSwapping}
                         onClick={() => setSelectedMilkTypes((prev) => ({ ...prev, [item.id]: type }))}
-                        className={`rounded-lg border-2 p-2.5 text-center text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                        className={`flex flex-col items-center justify-center rounded-lg border-2 px-3 h-16 w-full text-center text-sm font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                           selectedMilk === type
                             ? "border-sage bg-sage/10 text-foreground"
                             : "border-border hover:border-sage/50 text-muted-foreground hover:text-foreground"

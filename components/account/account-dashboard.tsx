@@ -564,7 +564,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                 {orders.length > 5 && (
                   <Button
                     variant="outline"
-                    className="w-full bg-transparent"
+                    className="w-full bg-transparent cursor-pointer"
                     onClick={() => setShowAllOrders((v) => !v)}
                   >
                     {showAllOrders
