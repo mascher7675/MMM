@@ -7,12 +7,9 @@ import { revalidatePath } from "next/cache"
 import { PRODUCTS, normalizeProductName } from "@/lib/products"
 import { computeNextDeliveryDate } from "@/lib/delivery-utils"
 
-
 // ---------------------------------------------------------------------------
 // Price helpers
-// Resolve price_cents by normalizing the name → canonical product lookup.
 // ---------------------------------------------------------------------------
-
 function getCashItemPriceCents(productName: string, size: string): number {
   const canonical = normalizeProductName(productName, size)
   return PRODUCTS.find((p) => p.name === canonical)?.priceInCents ?? 0
@@ -66,6 +63,7 @@ export interface AdminOrder {
   id: string
   order_code: string | null
   user_id: string
+  subscription_id: string | null
   status: string
   order_type: string
   subtotal: number
@@ -75,12 +73,13 @@ export interface AdminOrder {
   delivery_city: string | null
   delivery_zip: string | null
   delivery_state: string | null
+  delivery_date: string | null
   admin_notes: string | null
   placed_at: string | null
-  delivery_date: string | null
   created_at: string
   stripe_session_id: string | null
   stripe_payment_intent_id: string | null
+  stripe_subscription_id: string | null
   stripe_refund_id?: string | null
   refund_amount_cents?: number | null
   cancelled_at?: string | null
@@ -88,12 +87,6 @@ export interface AdminOrder {
   customer_email?: string
   customer_phone?: string
   is_cash_customer?: boolean
-  subscription_next_delivery_date?: string | null
-  subscription_final_delivery_date?: string | null
-  subscription_cancel_at_period_end?: boolean | null
-  // All 4 delivery dates stored explicitly — updated when user changes delivery day
-  stripe_subscription_id?: string | null
-  delivery_logs: SubscriptionDeliveryLog[]
   order_items: {
     id: string
     product_id: string
@@ -107,7 +100,7 @@ export interface AdminOrder {
 export interface SubscriptionDeliveryLog {
   id: string
   order_id: string
-  delivery_date: string   // YYYY-MM-DD
+  delivery_date: string
   delivery_state: string
   admin_notes: string | null
   created_at: string
@@ -184,15 +177,11 @@ export interface DeliveryStop {
   items: { name: string; quantity: number; size: string }[]
   /** @deprecated use sourceIds */
   subscriptionId: string
-  /** All subscription/order IDs contributing to this stop */
   sourceIds: string[]
   isCashCustomer: boolean
   routePosition: number | null
-  /** true if ALL sources are one-time orders (no subscription) */
   isOneTime: boolean
-  /** true if stop contains at least one subscription */
   hasSub: boolean
-  /** true if stop contains at least one one-time order */
   hasOneTime: boolean
 }
 
@@ -215,12 +204,10 @@ export async function getAdminStats() {
       supabase.from("subscriptions").select("*", { count: "exact", head: true }).eq("status", "active"),
       supabase.from("orders").select("*", { count: "exact", head: true }),
       supabase.from("messages").select("*", { count: "exact", head: true }).eq("status", "unread"),
-      // Orders placed in last 7 days
       supabase
         .from("orders")
         .select("id,total,order_type")
         .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-      // All-time revenue
       supabase.from("orders").select("total").eq("status", "confirmed"),
     ])
 
@@ -248,7 +235,6 @@ export async function getAdminStats() {
 export async function getAdminCustomers(): Promise<{ data: AdminCustomer[]; error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
-
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
@@ -280,229 +266,6 @@ export async function updateCustomerRole(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Cash Customer Management
-// ---------------------------------------------------------------------------
-
-/**
- * Creates a cash-only customer profile. These customers have no Supabase
- * auth account — we create a profile row with a generated UUID. They are
- * tracked for admin/delivery purposes only.
- */
-export async function createCashCustomer(data: {
-  first_name: string
-  last_name: string
-  phone?: string
-  email?: string
-  address?: string
-  city?: string
-  state?: string
-  zip?: string
-  delivery_day?: string
-  delivery_date?: string  // specific date for one-time orders (YYYY-MM-DD)
-  delivery_instructions?: string
-  admin_notes?: string
-  customer_type: "subscription" | "one_time"
-  items: { product_name: string; size: string; quantity: number }[]
-}): Promise<{ id: string | null; error: string | null }> {
-  try {
-    const { supabase } = await requireAdmin()
-
-    // Generate a UUID for the profile — this customer has no auth.users row
-    const { data: uuidRow } = await supabase.rpc("gen_random_uuid" as never) as { data: string | null }
-    // Fallback: use crypto if RPC not available
-    const newId = uuidRow ?? crypto.randomUUID()
-
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .insert({
-        id: newId,
-        first_name: data.first_name,
-        last_name: data.last_name,
-        phone: data.phone || null,
-        email: data.email || null,
-        address: data.address || null,
-        city: data.city || null,
-        state: data.state || null,
-        zip: data.zip || null,
-        delivery_day: data.delivery_day || "thursday",
-        delivery_instructions: data.delivery_instructions || null,
-        admin_notes: data.admin_notes || null,
-        is_cash_customer: true,
-        role: "customer",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single()
-
-    if (profileError || !profile) return { id: null, error: profileError?.message ?? "Failed to create profile" }
-
-    const pricedItems = data.items.map((item) => ({
-      ...item,
-      price_cents: data.customer_type === "subscription"
-        ? getCashSubscriptionPriceCents(item.product_name, item.size)
-        : getCashItemPriceCents(item.product_name, item.size),
-    }))
-    const subtotalCents = pricedItems.reduce((sum, item) => sum + item.price_cents * item.quantity, 0)
-
-    if (data.customer_type === "subscription") {
-      const deliveryDay = (data.delivery_day ?? "thursday") as "thursday" | "friday"
-      const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
-      const { data: sub, error: subError } = await supabase
-        .from("subscriptions")
-        .insert({
-          user_id: profile.id,
-          status: "active",
-          delivery_day: deliveryDay,
-          skipped_dates: [],
-          cancel_at_period_end: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single()
-
-      if (subError) return { id: null, error: subError.message }
-
-      if (sub && pricedItems.length > 0) {
-        // Expand quantity > 1 into individual rows so customers can swap each bottle independently.
-        const subItems = pricedItems.flatMap((item) =>
-          Array.from({ length: item.quantity }, () => ({
-            subscription_id: sub.id,
-            product_name: item.product_name,
-            size: item.size,
-            quantity: 1,
-            price_cents: item.price_cents,
-            created_at: new Date().toISOString(),
-          }))
-        )
-        const { error: itemsError } = await supabase.from("subscription_items").insert(subItems)
-        if (itemsError) return { id: null, error: itemsError.message }
-
-        // Create a confirmed order for the first delivery
-        const deliveryDateIso = data.delivery_date
-          ? new Date(data.delivery_date + "T00:00:00").toISOString()
-          : new Date(nextDeliveryDate + "T00:00:00").toISOString()
-
-        const { data: order, error: orderError } = await supabase
-          .from("orders")
-          .insert({
-            user_id: profile.id,
-            status: "confirmed",
-            order_type: "subscription",
-            subtotal: subtotalCents,
-            total: subtotalCents,
-            delivery_day: deliveryDay,
-            delivery_address: data.address || null,
-            delivery_city: data.city || null,
-            delivery_zip: data.zip || null,
-            placed_at: deliveryDateIso,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .select("id")
-          .single()
-
-        if (!orderError && order) {
-          const orderItems = pricedItems.map((item) => ({
-            order_id: order.id,
-            product_id: "cash-manual",
-            product_name: item.product_name,
-            size: item.size,
-            quantity: item.quantity,
-            price_cents: item.price_cents,
-            created_at: new Date().toISOString(),
-          }))
-          await supabase.from("order_items").insert(orderItems)
-        }
-      }
-    } else {
-      // one_time
-      const { data: order, error: orderError } = await supabase
-        .from("orders")
-        .insert({
-          user_id: profile.id,
-          status: "confirmed",
-          order_type: "one_time",
-          subtotal: subtotalCents,
-          total: subtotalCents,
-          delivery_day: data.delivery_day || null,
-          delivery_address: data.address || null,
-          delivery_city: data.city || null,
-          // delivery_state is the delivery status field (pending/delivered/etc.)
-          // — do NOT set it to the US state abbreviation; let it default to 'pending'
-          delivery_zip: data.zip || null,
-          placed_at: new Date().toISOString(),
-          delivery_date: data.delivery_date ?? null,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single()
-
-      if (orderError) return { id: null, error: orderError.message }
-
-      if (order) {
-        const orderItems = pricedItems.map((item) => ({
-          order_id: order.id,
-          product_id: "cash-manual",
-          product_name: item.product_name,
-          size: item.size,
-          quantity: item.quantity,
-          price_cents: item.price_cents,
-          created_at: new Date().toISOString(),
-        }))
-        const { error: itemsError } = await supabase.from("order_items").insert(orderItems)
-        if (itemsError) return { id: null, error: itemsError.message }
-      }
-    }
-
-    revalidatePath("/admin")
-    return { id: profile.id, error: null }
-  } catch (e) {
-    return { id: null, error: e instanceof Error ? e.message : "Failed to create customer" }
-  }
-}
-
-/**
- * Updates a cash customer's profile info and optionally their admin notes.
- */
-export async function updateCashCustomer(
-  customerId: string,
-  data: Partial<{
-    first_name: string
-    last_name: string
-    phone: string
-    email: string
-    address: string
-    city: string
-    state: string
-    zip: string
-    delivery_day: string
-    delivery_instructions: string
-    admin_notes: string
-  }>
-): Promise<{ error: string | null }> {
-  try {
-    const { supabase } = await requireAdmin()
-    const { error } = await supabase
-      .from("profiles")
-      .update({ ...data, updated_at: new Date().toISOString() })
-      .eq("id", customerId)
-      .eq("is_cash_customer", true)
-
-    if (error) return { error: error.message }
-    revalidatePath("/admin")
-    return { error: null }
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to update customer" }
-  }
-}
-
-/**
- * Updates the admin_notes field for any customer (cash or online).
- */
 export async function updateCustomerAdminNotes(
   customerId: string,
   admin_notes: string
@@ -522,9 +285,6 @@ export async function updateCustomerAdminNotes(
   }
 }
 
-/**
- * Fetches all orders and subscriptions for a cash customer.
- */
 export async function getCashCustomerHistory(customerId: string): Promise<{
   orders: CustomerHistoryOrder[]
   subscriptions: CustomerHistorySubscription[]
@@ -574,16 +334,11 @@ export async function getCashCustomerHistory(customerId: string): Promise<{
   }
 }
 
-/**
- * Deletes a cash customer profile and their subscription/items (cascade).
- * Only works on is_cash_customer = true rows for safety.
- */
 export async function deleteCashCustomer(
   customerId: string
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
-
     const { error } = await supabase
       .from("profiles")
       .delete()
@@ -598,9 +353,212 @@ export async function deleteCashCustomer(
   }
 }
 
-/**
- * Adds a new one-time order to an existing cash customer.
- */
+// ---------------------------------------------------------------------------
+// Cash Customer Management
+// ---------------------------------------------------------------------------
+export async function createCashCustomer(data: {
+  first_name: string
+  last_name: string
+  phone?: string
+  email?: string
+  address?: string
+  city?: string
+  state?: string
+  zip?: string
+  delivery_day?: string
+  delivery_date?: string
+  delivery_instructions?: string
+  admin_notes?: string
+  customer_type: "subscription" | "one_time"
+  items: { product_name: string; size: string; quantity: number }[]
+}): Promise<{ id: string | null; error: string | null }> {
+  try {
+    const { supabase } = await requireAdmin()
+
+    const { data: uuidRow } = await supabase.rpc("gen_random_uuid" as never) as { data: string | null }
+    const newId = uuidRow ?? crypto.randomUUID()
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .insert({
+        id: newId,
+        first_name: data.first_name,
+        last_name: data.last_name,
+        phone: data.phone || null,
+        email: data.email || null,
+        address: data.address || null,
+        city: data.city || null,
+        state: data.state || null,
+        zip: data.zip || null,
+        delivery_day: data.delivery_day || "thursday",
+        delivery_instructions: data.delivery_instructions || null,
+        admin_notes: data.admin_notes || null,
+        is_cash_customer: true,
+        role: "customer",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single()
+
+    if (profileError || !profile) return { id: null, error: profileError?.message ?? "Failed to create profile" }
+
+    const pricedItems = data.items.map((item) => ({
+      ...item,
+      price_cents: data.customer_type === "subscription"
+        ? getCashSubscriptionPriceCents(item.product_name, item.size)
+        : getCashItemPriceCents(item.product_name, item.size),
+    }))
+    const subtotalCents = pricedItems.reduce((sum, item) => sum + item.price_cents * item.quantity, 0)
+
+    if (data.customer_type === "subscription") {
+      const deliveryDay = (data.delivery_day ?? "thursday") as "thursday" | "friday"
+      const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
+
+      const { data: sub, error: subError } = await supabase
+        .from("subscriptions")
+        .insert({
+          user_id: profile.id,
+          status: "active",
+          delivery_day: deliveryDay,
+          skipped_dates: [],
+          cancel_at_period_end: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single()
+
+      if (subError) return { id: null, error: subError.message }
+
+      if (sub && pricedItems.length > 0) {
+        const subItems = pricedItems.flatMap((item) =>
+          Array.from({ length: item.quantity }, () => ({
+            subscription_id: sub.id,
+            product_name: item.product_name,
+            size: item.size,
+            quantity: 1,
+            price_cents: item.price_cents,
+            created_at: new Date().toISOString(),
+          }))
+        )
+        const { error: itemsError } = await supabase.from("subscription_items").insert(subItems)
+        if (itemsError) return { id: null, error: itemsError.message }
+
+        const deliveryDateStr = data.delivery_date ?? nextDeliveryDate
+        const deliveryDateIso = new Date(deliveryDateStr + "T00:00:00").toISOString()
+
+        const { data: order, error: orderError } = await supabase
+          .from("orders")
+          .insert({
+            user_id: profile.id,
+            subscription_id: sub.id,
+            status: "confirmed",
+            order_type: "subscription",
+            subtotal: subtotalCents,
+            total: subtotalCents,
+            delivery_day: deliveryDay,
+            delivery_address: data.address || null,
+            delivery_city: data.city || null,
+            delivery_zip: data.zip || null,
+            delivery_date: deliveryDateStr,
+            placed_at: deliveryDateIso,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .select("id")
+          .single()
+
+        if (!orderError && order) {
+          const orderItems = pricedItems.map((item) => ({
+            order_id: order.id,
+            product_id: "cash-manual",
+            product_name: item.product_name,
+            size: item.size,
+            quantity: item.quantity,
+            price_cents: item.price_cents,
+            created_at: new Date().toISOString(),
+          }))
+          await supabase.from("order_items").insert(orderItems)
+        }
+      }
+    } else {
+      const { data: order, error: orderError } = await supabase
+        .from("orders")
+        .insert({
+          user_id: profile.id,
+          status: "confirmed",
+          order_type: "one_time",
+          subtotal: subtotalCents,
+          total: subtotalCents,
+          delivery_day: data.delivery_day || null,
+          delivery_address: data.address || null,
+          delivery_city: data.city || null,
+          delivery_zip: data.zip || null,
+          placed_at: new Date().toISOString(),
+          delivery_date: data.delivery_date ?? null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single()
+
+      if (orderError) return { id: null, error: orderError.message }
+
+      if (order) {
+        const orderItems = pricedItems.map((item) => ({
+          order_id: order.id,
+          product_id: "cash-manual",
+          product_name: item.product_name,
+          size: item.size,
+          quantity: item.quantity,
+          price_cents: item.price_cents,
+          created_at: new Date().toISOString(),
+        }))
+        const { error: itemsError } = await supabase.from("order_items").insert(orderItems)
+        if (itemsError) return { id: null, error: itemsError.message }
+      }
+    }
+
+    revalidatePath("/admin")
+    return { id: profile.id, error: null }
+  } catch (e) {
+    return { id: null, error: e instanceof Error ? e.message : "Failed to create customer" }
+  }
+}
+
+export async function updateCashCustomer(
+  customerId: string,
+  data: Partial<{
+    first_name: string
+    last_name: string
+    phone: string
+    email: string
+    address: string
+    city: string
+    state: string
+    zip: string
+    delivery_day: string
+    delivery_instructions: string
+    admin_notes: string
+  }>
+): Promise<{ error: string | null }> {
+  try {
+    const { supabase } = await requireAdmin()
+    const { error } = await supabase
+      .from("profiles")
+      .update({ ...data, updated_at: new Date().toISOString() })
+      .eq("id", customerId)
+      .eq("is_cash_customer", true)
+
+    if (error) return { error: error.message }
+    revalidatePath("/admin")
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to update customer" }
+  }
+}
+
 export async function addOrderToCashCustomer(
   customerId: string,
   data: {
@@ -612,7 +570,6 @@ export async function addOrderToCashCustomer(
   try {
     const { supabase } = await requireAdmin()
 
-    // Verify the customer is a cash customer
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("id, address, city, state, zip")
@@ -622,11 +579,6 @@ export async function addOrderToCashCustomer(
 
     if (profileError || !profile) return { error: "Cash customer not found" }
 
-    const deliveryDateIso = data.delivery_date
-      ? new Date(data.delivery_date + "T00:00:00").toISOString()
-      : new Date().toISOString()
-
-    // Calculate line item prices and order total
     const pricedItems = data.items.map(item => ({
       ...item,
       price_cents: getCashItemPriceCents(item.product_name, item.size),
@@ -644,8 +596,6 @@ export async function addOrderToCashCustomer(
         delivery_day: data.delivery_day,
         delivery_address: profile.address || null,
         delivery_city: profile.city || null,
-        // delivery_state is the delivery status field (pending/delivered/etc.)
-        // — do NOT set it to the US state abbreviation; let it default to 'pending'
         delivery_zip: profile.zip || null,
         placed_at: new Date().toISOString(),
         delivery_date: data.delivery_date ?? null,
@@ -678,16 +628,11 @@ export async function addOrderToCashCustomer(
   }
 }
 
-/**
- * Adds a recurring subscription to an existing cash customer.
- * If they already have an active subscription, this adds an additional one.
- * Also creates a confirmed order for the first delivery.
- */
 export async function addSubscriptionToCashCustomer(
   customerId: string,
   data: {
     delivery_day: string
-    delivery_date?: string  // specific date for first delivery (YYYY-MM-DD)
+    delivery_date?: string
     items: { product_name: string; size: string; quantity: number }[]
   }
 ): Promise<{ error: string | null }> {
@@ -705,6 +650,7 @@ export async function addSubscriptionToCashCustomer(
 
     const deliveryDay = data.delivery_day as "thursday" | "friday"
     const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
+
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .insert({
@@ -722,13 +668,11 @@ export async function addSubscriptionToCashCustomer(
     if (subError) return { error: subError.message }
 
     if (sub && data.items.length > 0) {
-      // Use subscription price ($48 / $72), not one-time price
       const pricedItems = data.items.map((item) => ({
         ...item,
         price_cents: getCashSubscriptionPriceCents(item.product_name, item.size),
       }))
 
-      // Save subscription items — expand quantity > 1 into individual rows so each bottle can be swapped independently.
       const subItems = pricedItems.flatMap((item) =>
         Array.from({ length: item.quantity }, () => ({
           subscription_id: sub.id,
@@ -742,19 +686,15 @@ export async function addSubscriptionToCashCustomer(
       const { error: itemsError } = await supabase.from("subscription_items").insert(subItems)
       if (itemsError) return { error: itemsError.message }
 
-      // Create a confirmed order for the first delivery
-      const subtotalCents = pricedItems.reduce(
-        (sum, item) => sum + item.price_cents * item.quantity,
-        0
-      )
-      const deliveryDateIso = data.delivery_date
-        ? new Date(data.delivery_date + "T00:00:00").toISOString()
-        : new Date(nextDeliveryDate + "T00:00:00").toISOString()
+      const subtotalCents = pricedItems.reduce((sum, item) => sum + item.price_cents * item.quantity, 0)
+      const deliveryDateStr = data.delivery_date ?? nextDeliveryDate
+      const deliveryDateIso = new Date(deliveryDateStr + "T00:00:00").toISOString()
 
       const { data: order, error: orderError } = await supabase
         .from("orders")
         .insert({
           user_id: customerId,
+          subscription_id: sub.id,
           status: "confirmed",
           order_type: "subscription",
           subtotal: subtotalCents,
@@ -763,6 +703,7 @@ export async function addSubscriptionToCashCustomer(
           delivery_address: profile.address || null,
           delivery_city: profile.city || null,
           delivery_zip: profile.zip || null,
+          delivery_date: deliveryDateStr,
           placed_at: deliveryDateIso,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -784,7 +725,6 @@ export async function addSubscriptionToCashCustomer(
       }
     }
 
-    // Update the profile's delivery_day to the new subscription day
     await supabase
       .from("profiles")
       .update({ delivery_day: data.delivery_day, updated_at: new Date().toISOString() })
@@ -800,11 +740,6 @@ export async function addSubscriptionToCashCustomer(
 // ---------------------------------------------------------------------------
 // Delivery Route Ordering
 // ---------------------------------------------------------------------------
-
-/**
- * Saves the admin-arranged route order. Accepts an array of customer IDs
- * in the desired stop order and writes their position index to profiles.
- */
 export async function saveRouteOrder(
   orderedCustomerIds: string[]
 ): Promise<{ error: string | null }> {
@@ -832,22 +767,18 @@ export async function saveRouteOrder(
 // ---------------------------------------------------------------------------
 // Orders
 // ---------------------------------------------------------------------------
-export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; error: string | null }> {
+export async function getAdminOrders(limit = 200): Promise<{ data: AdminOrder[]; error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
 
     const { data: orders, error } = await supabase
       .from("orders")
-      .select(`
-        *,
-        order_items (*)
-      `)
+      .select(`*, order_items (*)`)
       .order("created_at", { ascending: false })
       .limit(limit)
 
     if (error) return { data: [], error: error.message }
 
-    // Attach customer names by joining profiles separately
     const userIds = [...new Set((orders ?? []).map((o) => o.user_id))]
     const { data: profiles } = await supabase
       .from("profiles")
@@ -858,54 +789,6 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
       (profiles ?? []).map((p) => [p.id, p])
     )
 
-    // Fetch subscriptions to get delivery info and current items
-    const { data: subs } = await supabase
-      .from("subscriptions")
-      .select("user_id, stripe_subscription_id, delivery_day, final_delivery_date, cancel_at_period_end, status, subscription_items(id, product_id, product_name, size, quantity, price_cents)")
-      .in("user_id", userIds)
-
-    // Map user_id -> subscription info (prefer active, fall back to most recent)
-    type SubMapEntry = {
-      final_delivery_date: string | null
-      cancel_at_period_end: boolean
-      delivery_day: string | null
-      stripe_subscription_id: string | null
-      subscription_items: { id: string; product_id: string | null; product_name: string | null; size: string; quantity: number; price_cents: number | null }[]
-    }
-    const subMap: Record<string, SubMapEntry> = {}
-    for (const s of subs ?? []) {
-      const existing = subMap[s.user_id]
-      // Prefer active subscriptions over cancelled/inactive
-      if (!existing || (s.status === "active" && existing.cancel_at_period_end !== false)) {
-        subMap[s.user_id] = {
-          final_delivery_date: s.final_delivery_date,
-          cancel_at_period_end: s.cancel_at_period_end ?? false,
-          delivery_day: s.delivery_day ?? null,
-          stripe_subscription_id: (s as { stripe_subscription_id?: string | null }).stripe_subscription_id ?? null,
-          subscription_items: (s.subscription_items ?? []) as SubMapEntry["subscription_items"],
-        }
-      }
-    }
-
-    // Fetch delivery logs for all subscription orders
-    const subOrderIds = (orders ?? [])
-      .filter((o) => o.order_type === "subscription")
-      .map((o) => o.id)
-
-    let logsMap: Record<string, SubscriptionDeliveryLog[]> = {}
-    if (subOrderIds.length > 0) {
-      const { data: logs } = await supabase
-        .from("subscription_delivery_logs")
-        .select("*")
-        .in("order_id", subOrderIds)
-        .order("delivery_date", { ascending: true })
-
-      for (const log of logs ?? []) {
-        if (!logsMap[log.order_id]) logsMap[log.order_id] = []
-        logsMap[log.order_id].push(log as SubscriptionDeliveryLog)
-      }
-    }
-
     const enriched = (orders ?? []).map((o) => ({
       ...o,
       customer_name: profileMap[o.user_id]
@@ -914,18 +797,7 @@ export async function getAdminOrders(limit = 50): Promise<{ data: AdminOrder[]; 
       customer_email: profileMap[o.user_id]?.email || "",
       customer_phone: profileMap[o.user_id]?.phone || "",
       is_cash_customer: profileMap[o.user_id]?.is_cash_customer ?? false,
-      // For subscription orders, use live subscription_items so milk swaps are reflected.
-      // Fall back to order_items snapshot if no subscription found (e.g. cancelled sub).
-      order_items: o.order_type === "subscription" && (subMap[o.user_id]?.subscription_items ?? []).length > 0
-        ? (subMap[o.user_id].subscription_items as { id: string; product_id: string; product_name: string; size: string; quantity: number; price_cents: number }[])
-        : (o.order_items ?? []),
-      delivery_logs: logsMap[o.id] ?? [],
-      subscription_next_delivery_date: o.order_type === "subscription" && subMap[o.user_id]?.delivery_day
-        ? computeNextDeliveryDate(subMap[o.user_id].delivery_day as "thursday" | "friday")
-        : null,
-      subscription_final_delivery_date: o.order_type === "subscription" ? (subMap[o.user_id]?.final_delivery_date ?? null) : null,
-      subscription_cancel_at_period_end: o.order_type === "subscription" ? (subMap[o.user_id]?.cancel_at_period_end ?? null) : null,
-      stripe_subscription_id: o.order_type === "subscription" ? (subMap[o.user_id]?.stripe_subscription_id ?? null) : null,
+      order_items: o.order_items ?? [],
     }))
 
     return { data: enriched as AdminOrder[], error: null }
@@ -991,28 +863,12 @@ export async function updateOrderAdminNotes(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Cancel & Refund a one-time order (admin only)
-// ---------------------------------------------------------------------------
-/**
- * Cancels a one-time order and issues a full Stripe refund if a payment intent
- * exists. For cash/manual orders (no Stripe payment), only the DB record is
- * updated. Safe to call on already-cancelled orders — it will no-op gracefully.
- *
- * What it does:
- *   1. Loads the order to verify it exists and is a one-time order
- *   2. If stripe_payment_intent_id is set → issues a full refund via Stripe
- *   3. Marks order:  status = 'cancelled', delivery_state = 'cancelled',
- *                    cancelled_at = now, stripe_refund_id (if refunded),
- *                    refund_amount_cents (if refunded)
- */
 export async function cancelAndRefundOrder(
   orderId: string
 ): Promise<{ refunded: boolean; refundId: string | null; error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
 
-    // ── 1. Fetch the order ──────────────────────────────────────────────────
     const { data: order, error: fetchError } = await supabase
       .from("orders")
       .select("id, status, order_type, total, stripe_payment_intent_id, is_cash_customer")
@@ -1023,17 +879,14 @@ export async function cancelAndRefundOrder(
       return { refunded: false, refundId: null, error: fetchError?.message ?? "Order not found" }
     }
 
-    // Already cancelled — no-op
     if (order.status === "cancelled") {
       return { refunded: false, refundId: null, error: null }
     }
 
-    // Only one-time orders are eligible for this flow
     if (order.order_type !== "one_time") {
       return { refunded: false, refundId: null, error: "Only one-time orders can be cancelled via this action" }
     }
 
-    // ── 2. Issue Stripe refund if applicable ────────────────────────────────
     let stripeRefundId: string | null = null
     let refundAmountCents: number | null = null
     let didRefund = false
@@ -1045,7 +898,7 @@ export async function cancelAndRefundOrder(
           reason: "requested_by_customer",
         })
         stripeRefundId = refund.id
-        refundAmountCents = refund.amount  // Stripe returns amount in cents
+        refundAmountCents = refund.amount
         didRefund = true
       } catch (stripeErr: unknown) {
         const msg = stripeErr instanceof Error ? stripeErr.message : "Stripe refund failed"
@@ -1053,7 +906,6 @@ export async function cancelAndRefundOrder(
       }
     }
 
-    // ── 3. Update the order record ──────────────────────────────────────────
     const now = new Date().toISOString()
     const { error: updateError } = await supabase
       .from("orders")
@@ -1076,21 +928,12 @@ export async function cancelAndRefundOrder(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Delete an orphaned order (one whose user profile no longer exists)
-// ---------------------------------------------------------------------------
-/**
- * Permanently deletes an order and its order_items when the associated
- * user profile no longer exists (i.e. the customer was deleted).
- * Refuses to delete if the profile still exists — use cancelAndRefundOrder instead.
- */
 export async function deleteOrphanedOrder(
   orderId: string
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
 
-    // Fetch the order to get user_id
     const { data: order, error: fetchError } = await supabase
       .from("orders")
       .select("id, user_id")
@@ -1099,7 +942,6 @@ export async function deleteOrphanedOrder(
 
     if (fetchError || !order) return { error: "Order not found" }
 
-    // Safety check: refuse if the profile still exists
     const { data: profile } = await supabase
       .from("profiles")
       .select("id")
@@ -1110,7 +952,6 @@ export async function deleteOrphanedOrder(
       return { error: "Cannot delete — customer profile still exists. Use cancel instead." }
     }
 
-    // Delete order_items first (FK constraint), then the order
     const { error: itemsError } = await supabase
       .from("order_items")
       .delete()
@@ -1133,11 +974,11 @@ export async function deleteOrphanedOrder(
 }
 
 // ---------------------------------------------------------------------------
-// Subscription delivery log — upsert one row per order+delivery_date
+// Subscription delivery log — kept for backwards compat with existing logs
 // ---------------------------------------------------------------------------
 export async function upsertSubscriptionDeliveryLog(
   orderId: string,
-  deliveryDate: string,  // YYYY-MM-DD
+  deliveryDate: string,
   deliveryState: string,
   adminNotes?: string
 ): Promise<{ error: string | null }> {
@@ -1204,16 +1045,9 @@ export async function getAdminSubscriptions(): Promise<{ data: AdminSubscription
   }
 }
 
-// ---------------------------------------------------------------------------
-// Admin: Skip one or more weekly deliveries for a subscription
-//
-// Adds dates to skipped_dates array in Supabase.
-// No Stripe interaction needed — with weekly billing, skipping a week
-// automatically means no charge for that week.
-// ---------------------------------------------------------------------------
 export async function adminSkipWeeklyDelivery(
   subscriptionId: string,
-  skipDates: string[]  // YYYY-MM-DD array
+  skipDates: string[]
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
@@ -1237,10 +1071,7 @@ export async function adminSkipWeeklyDelivery(
 
     const { error: updateError } = await supabase
       .from("subscriptions")
-      .update({
-        skipped_dates: merged,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ skipped_dates: merged, updated_at: new Date().toISOString() })
       .eq("id", subscriptionId)
 
     if (updateError) return { error: updateError.message }
@@ -1252,12 +1083,9 @@ export async function adminSkipWeeklyDelivery(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Admin: Unskip a weekly delivery (remove from skipped_dates)
-// ---------------------------------------------------------------------------
 export async function adminUnskipWeeklyDelivery(
   subscriptionId: string,
-  deliveryDate: string  // YYYY-MM-DD
+  deliveryDate: string
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
@@ -1277,10 +1105,7 @@ export async function adminUnskipWeeklyDelivery(
 
     const { error: updateError } = await supabase
       .from("subscriptions")
-      .update({
-        skipped_dates: newSkipped,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ skipped_dates: newSkipped, updated_at: new Date().toISOString() })
       .eq("id", subscriptionId)
 
     if (updateError) return { error: updateError.message }
@@ -1292,11 +1117,6 @@ export async function adminUnskipWeeklyDelivery(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Admin: Set subscription status to "active" or "cancelled" (DB only).
-// Do NOT pass "paused" here — use adminPauseSubscription instead,
-// which also handles Stripe pause_collection correctly.
-// ---------------------------------------------------------------------------
 export async function adminUpdateSubscriptionStatus(
   subscriptionId: string,
   status: "active" | "paused" | "cancelled"
@@ -1355,7 +1175,6 @@ export async function adminCancelSubscriptionOnStripe(
 export async function getAdminMessages(): Promise<{ data: AdminMessage[]; error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
-
     const { data, error } = await supabase
       .from("messages")
       .select("*")
@@ -1388,9 +1207,7 @@ export async function updateMessageStatus(
 }
 
 // ---------------------------------------------------------------------------
-// Delivery management — get this week's delivery list
-// Includes both active subscriptions AND confirmed one-time orders for the day
-// Also includes cash customers and respects route_position ordering
+// Delivery management
 // ---------------------------------------------------------------------------
 export async function getDeliveryList(deliveryDay: "thursday" | "friday", deliveryDate: string): Promise<{
   data: DeliveryStop[]
@@ -1399,40 +1216,18 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
   try {
     const { supabase } = await requireAdmin()
 
-    // ── 1. Active subscriptions for this delivery day ──────────────────────
-    // Fetches active subs and filters out any that have this date in skipped_dates.
     const { data: subs, error: subsError } = await supabase
       .from("subscriptions")
-      .select(`
-        id,
-        user_id,
-        status,
-        skipped_dates,
-        subscription_items (product_name, size, quantity)
-      `)
+      .select(`id, user_id, status, skipped_dates, subscription_items (product_name, size, quantity)`)
       .in("status", ["active"])
       .eq("delivery_day", deliveryDay)
       .eq("cancel_at_period_end", false)
 
-
     if (subsError) return { data: [], error: subsError.message }
 
-    // ── 2. Confirmed one-time orders for this delivery day ─────────────────
-    // Filter by delivery_date (the chosen delivery date) rather than placed_at
-    // (which is the order creation time and may differ from the delivery date,
-    // e.g. when an order is placed Wednesday night for the following Thursday).
     const { data: oneTimeOrders, error: ordersError } = await supabase
       .from("orders")
-      .select(`
-        id,
-        user_id,
-        delivery_address,
-        delivery_city,
-        delivery_zip,
-        placed_at,
-        delivery_date,
-        order_items (product_name, size, quantity)
-      `)
+      .select(`id, user_id, delivery_address, delivery_city, delivery_zip, placed_at, delivery_date, order_items (product_name, size, quantity)`)
       .eq("delivery_day", deliveryDay)
       .eq("order_type", "one_time")
       .eq("status", "confirmed")
@@ -1441,7 +1236,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
 
     if (ordersError) return { data: [], error: ordersError.message }
 
-    // ── 3. Fetch profiles for everyone ────────────────────────────────────
     const subUserIds = (subs ?? []).map((s) => s.user_id)
     const orderUserIds = (oneTimeOrders ?? []).map((o) => o.user_id)
     const allUserIds = [...new Set([...subUserIds, ...orderUserIds])]
@@ -1455,10 +1249,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
 
     const profileMap = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]))
 
-    // ── 4. Build subscription stops ────────────────────────────────────────
-    // Exclude any subscription that has this specific date in its skipped_dates.
-    // This handles partial pauses (e.g. skipping 2 of 4 weeks) gracefully.
-    // Each sub becomes a partial stop entry keyed by user_id.
     type PartialStop = {
       customerId: string
       customerName: string
@@ -1477,7 +1267,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
 
     const allPartialStops: PartialStop[] = []
 
-    // Subscription partials
     ;(subs ?? [])
       .filter((s) => {
         if (!profileMap[s.user_id]?.address) return false
@@ -1509,10 +1298,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
         })
       })
 
-    // ── 5. Build one-time order partials ──────────────────────────────────────
-    // Skip orders whose customer profile no longer exists (e.g. deleted cash customer).
-    // Without a profile there's no name, phone, delivery instructions, or route position,
-    // so the stop would appear as "Unknown" and can't be acted on meaningfully.
     ;(oneTimeOrders ?? [])
       .filter((o) => profileMap[o.user_id] && (profileMap[o.user_id]?.address || o.delivery_address))
       .forEach((o) => {
@@ -1538,10 +1323,6 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
         })
       })
 
-    // ── 6. Group partial stops by customerId ───────────────────────────────
-    // All subscriptions and one-time orders for the same user on the same
-    // delivery day are merged into a single stop — items are combined and
-    // type flags (hasSub / hasOneTime) reflect the mix.
     const stopMap = new Map<string, DeliveryStop>()
 
     for (const partial of allPartialStops) {
@@ -1566,19 +1347,16 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           hasOneTime: partial.isOneTime,
         })
       } else {
-        // Merge items into existing stop
         existing.items.push(...partial.items)
         existing.sourceIds.push(partial.sourceId)
         if (!partial.isOneTime) existing.hasSub = true
         if (partial.isOneTime) existing.hasOneTime = true
-        // isOneTime = true only if ALL sources are one-time
         existing.isOneTime = !existing.hasSub
       }
     }
 
     const list: DeliveryStop[] = Array.from(stopMap.values())
 
-    // Sort by route_position (nulls go to end), then by customer name as tiebreaker
     list.sort((a, b) => {
       if (a.routePosition !== null && b.routePosition !== null) return a.routePosition - b.routePosition
       if (a.routePosition !== null) return -1

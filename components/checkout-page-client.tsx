@@ -54,7 +54,7 @@ export function CheckoutPageClient({ userId, initialAddress }: CheckoutPageClien
                     {item.size} x {item.quantity}
                   </p>
                   {item.isSubscription && (
-                    <span className="text-xs text-sage">Monthly subscription</span>
+                    <span className="text-xs text-sage">Weekly subscription</span>
                   )}
                 </div>
                 <p className="font-medium">

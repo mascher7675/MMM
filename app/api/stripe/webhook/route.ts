@@ -91,17 +91,13 @@ export async function POST(request: NextRequest) {
 //   1. Find the subscription in our DB by stripe_subscription_id via
 //      get_subscription_for_webhook() — a SECURITY DEFINER function that
 //      bypasses RLS so the sessionless webhook request can read the DB.
-//   2. Determine the delivery date for this billing period:
-//      - period_start is always a Friday (universal Friday billing anchor)
-//      - Friday customers: delivery = that same Friday
-//      - Thursday customers: delivery = the Thursday immediately before
-//   3. Check if that delivery date is in skipped_dates.
-//   4. If yes → add a credit invoice item equal to the full invoice amount,
-//      bringing the total to $0. Customer is not charged.
+//   2. Determine the delivery date for this billing period.
+//   3. Create the weekly delivery order row (confirmed or skipped) via
+//      create_weekly_delivery_order() — also SECURITY DEFINER.
+//   4. If skipped: apply a credit to zero out the invoice, remove from skipped_dates.
 // ---------------------------------------------------------------------------
 async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
   // The 2026-02-25.clover API version moved subscription off the Invoice type.
-  // Cast through unknown to access it, consistent with the rest of the codebase.
   const invoiceAny = invoice as unknown as { subscription?: string | { id: string } }
   const stripeSubscriptionId =
     typeof invoiceAny.subscription === "string"
@@ -113,9 +109,6 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     return
   }
 
-  // Use SECURITY DEFINER RPC functions so the webhook can read/write the DB
-  // without a user session. Direct table access would be blocked by RLS since
-  // Stripe webhook requests have no auth cookie.
   const supabase = await createClient()
 
   const { data: rows, error: subError } = await supabase
@@ -134,23 +127,12 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     return
   }
 
-  const skippedDates: string[] = Array.isArray(sub.skipped_dates) ? sub.skipped_dates : []
-
-  if (skippedDates.length === 0) {
-    return
-  }
-
   // ---------------------------------------------------------------------------
   // Determine the delivery date this invoice is charging for.
   //
   // period_start is always a Friday (universal Friday billing anchor).
-  //
   // Friday customers:   delivery = that same Friday
   // Thursday customers: delivery = the Thursday immediately before period_start
-  //
-  // We walk BACKWARD from period_start to find the correct weekday.
-  // Walking forward would find the wrong week for Thursday customers
-  // (next Thursday, 6 days later, instead of yesterday).
   // ---------------------------------------------------------------------------
   const periodStartDate = unixToESTDateStr(invoice.period_start)
   const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day as "thursday" | "friday")
@@ -160,47 +142,71 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     return
   }
 
-  if (!skippedDates.includes(deliveryDate)) {
-    // This delivery isn't skipped — charge normally
-    return
+  const skippedDates: string[] = Array.isArray(sub.skipped_dates) ? sub.skipped_dates : []
+  const isSkipped = skippedDates.includes(deliveryDate)
+
+  // ---------------------------------------------------------------------------
+  // Create the weekly delivery order row.
+  // This happens for both skipped and confirmed weeks so the order always
+  // exists by Thursday evening — before admins build delivery routes.
+  // Idempotency is handled inside create_weekly_delivery_order.
+  // ---------------------------------------------------------------------------
+  const { data: orderResult, error: orderError } = await supabase
+    .rpc("create_weekly_delivery_order", {
+      p_subscription_id: sub.id,
+      p_delivery_date: deliveryDate,
+      p_status: isSkipped ? "skipped" : "confirmed",
+      p_stripe_invoice_id: invoice.id ?? "",
+    })
+
+  if (orderError) {
+    console.error(`[webhook] Failed to create weekly delivery order for sub ${sub.id}:`, orderError.message)
+    // Don't return — still need to apply skip credit if applicable
+  } else {
+    const result = orderResult as { error: string | null; skipped_duplicate?: boolean; order_id?: string }
+    if (result?.skipped_duplicate) {
+      console.log(`[webhook] Weekly order already exists for sub ${sub.id} on ${deliveryDate} — skipping duplicate`)
+    } else if (result?.order_id) {
+      console.log(`[webhook] Created ${isSkipped ? "skipped" : "confirmed"} order ${result.order_id} for sub ${sub.id} on ${deliveryDate}`)
+    }
   }
 
   // ---------------------------------------------------------------------------
-  // The delivery is skipped. Add a credit invoice item to zero out the invoice.
+  // If skipped: apply Stripe credit to zero out the invoice, then remove
+  // this date from skipped_dates to prevent double-crediting on retry.
   // ---------------------------------------------------------------------------
+  if (!isSkipped) {
+    return
+  }
+
   const amountToCredit = invoice.amount_due
 
   if (amountToCredit <= 0) {
-    // Already zero — nothing to do
-    return
+    // Invoice already zero — no credit needed, but still clean up skipped_dates
+  } else {
+    const customerId =
+      typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id
+
+    if (!customerId) {
+      console.error("[webhook] invoice.upcoming: no customer on invoice", invoice.id)
+      return
+    }
+
+    console.log(
+      `[webhook] Skipping delivery ${deliveryDate} for sub ${stripeSubscriptionId}. ` +
+      `Crediting $${(amountToCredit / 100).toFixed(2)} on invoice ${invoice.id}`
+    )
+
+    await stripe.invoiceItems.create({
+      customer: customerId,
+      amount: -amountToCredit,
+      currency: invoice.currency,
+      description: `Skipped delivery — ${deliveryDate}`,
+      invoice: invoice.id ?? undefined,
+    })
   }
 
-  const customerId =
-    typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id
-
-  if (!customerId) {
-    console.error("[webhook] invoice.upcoming: no customer on invoice", invoice.id)
-    return
-  }
-
-  console.log(
-    `[webhook] Skipping delivery ${deliveryDate} for sub ${stripeSubscriptionId}. ` +
-    `Crediting $${(amountToCredit / 100).toFixed(2)} on invoice ${invoice.id}`
-  )
-
-  await stripe.invoiceItems.create({
-    customer: customerId,
-    amount: -amountToCredit,        // negative = credit
-    currency: invoice.currency,
-    description: `Skipped delivery — ${deliveryDate}`,
-    invoice: invoice.id ?? undefined,
-  })
-
-  // ---------------------------------------------------------------------------
-  // Remove the date from skipped_dates after applying the credit.
-  // This prevents double-crediting if Stripe retries the event.
-  // Uses SECURITY DEFINER function to bypass RLS for the sessionless webhook.
-  // ---------------------------------------------------------------------------
+  // Remove the date from skipped_dates after processing
   const newSkippedDates = skippedDates.filter((d) => d !== deliveryDate)
 
   const { error: updateError } = await supabase
@@ -212,35 +218,27 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
   if (updateError) {
     console.error(`[webhook] Failed to update skipped_dates for sub ${sub.id}:`, updateError.message)
   } else {
-    console.log(
-      `[webhook] Credit applied. Removed ${deliveryDate} from skipped_dates for sub ${sub.id}`
-    )
+    console.log(`[webhook] Removed ${deliveryDate} from skipped_dates for sub ${sub.id}`)
   }
 }
 
 // ---------------------------------------------------------------------------
-// Given a period_start date string (YYYY-MM-DD, always a Friday with universal
-// Friday billing) and the customer's delivery day, find the delivery date for
-// that billing period.
+// Given a period_start date string (YYYY-MM-DD, always a Friday) and the
+// customer's delivery day, find the delivery date for that billing period.
 //
-// We walk BACKWARD from period_start to find the matching weekday:
+// Walk BACKWARD from period_start to find the matching weekday:
 //   - Friday customers:   period_start IS the delivery date (0 days back)
 //   - Thursday customers: delivery was the day before (1 day back)
-//
-// Walking backward is correct because Thursday delivery always precedes
-// Friday billing. Walking forward would skip to the following Thursday
-// (6 days later), matching the wrong week.
 // ---------------------------------------------------------------------------
 function getDeliveryDateForPeriod(
-  periodStart: string,             // YYYY-MM-DD — always a Friday
+  periodStart: string,
   deliveryDay: "thursday" | "friday"
 ): string | null {
-  const targetDayNum = deliveryDay === "friday" ? 5 : 4  // JS getDay(): Thu=4, Fri=5
+  const targetDayNum = deliveryDay === "friday" ? 5 : 4
 
   const [y, m, d] = periodStart.split("-").map(Number)
   const date = new Date(y, m - 1, d)
 
-  // Walk backward up to 7 days to find the matching weekday
   for (let i = 0; i < 7; i++) {
     if (date.getDay() === targetDayNum) {
       const yyyy = date.getFullYear()

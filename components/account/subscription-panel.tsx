@@ -66,7 +66,6 @@ export interface Subscription {
   current_period_end: string | null
   final_delivery_date: string | null
   stripe_subscription_id: string | null
-  delivery_dates: string[] | null
   skipped_dates: string[] | null
   subscription_items: SubscriptionItem[]
 }
@@ -83,6 +82,7 @@ const MILK_OPTIONS: { type: "oat" | "almond" | "hemp" | "cashew"; label: string 
   { type: "oat", label: "Oat" },
   { type: "almond", label: "Almond" },
   { type: "hemp", label: "Hemp Seed" },
+  { type: "cashew", label: "Cashew" },
 ]
  
 function milkTypeFromProductId(productId: string | undefined): "oat" | "almond" | "hemp" | "cashew" | null {
@@ -810,7 +810,9 @@ function SingleSubscriptionCard({
                         size="sm"
                         className="gap-2 px-6 cursor-pointer"
                       >
-                        {isSwapping && <Loader2 className="h-4 w-4 animate-spin" />}
+                        {isSwapping ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : null}
                         {isSwapping ? "Saving…" : hasChanged ? "Save Change" : "No Changes"}
                       </Button>
                     )}

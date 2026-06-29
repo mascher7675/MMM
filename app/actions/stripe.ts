@@ -28,18 +28,11 @@ interface CartItem {
 function computeFridayBillingAnchorUnix(): number {
   const dateStr = computeNextDeliveryDate("friday")
   const [y, m, d] = dateStr.split("-").map(Number)
-  // Noon UTC on that Friday to avoid any timezone edge cases with Stripe
   return Math.floor(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getTime() / 1000)
 }
 
 // ---------------------------------------------------------------------------
 // Create Checkout Session
-// Embeds user_id, cart_items, and delivery_day in session metadata so
-// saveOrderFromSession can reconstruct everything server-side.
-//
-// WEEKLY BILLING: subscription line items use interval: "week".
-// All subscriptions are anchored to Friday. Skipping a week = no charge
-// that week (handled via Stripe webhook + Supabase skipped_dates).
 // ---------------------------------------------------------------------------
 export async function createCheckoutSession(
   cartItems: CartItem[],
@@ -109,11 +102,6 @@ export async function createCheckoutSession(
       metadata,
     }
 
-    // ---------------------------------------------------------------------------
-    // Anchor all subscription billing to the next Friday.
-    // proration_behavior: "none" means Stripe charges the full weekly amount
-    // starting from the anchor date — no partial-week proration on the first bill.
-    // ---------------------------------------------------------------------------
     if (hasSubscription) {
       sessionParams.subscription_data = {
         billing_cycle_anchor: computeFridayBillingAnchorUnix(),
@@ -124,7 +112,6 @@ export async function createCheckoutSession(
       }
     }
 
-    // Link to the user's existing Stripe customer record if we have one
     if (user) {
       const { data: profile } = await supabase
         .from("profiles")
@@ -151,7 +138,7 @@ export async function createCheckoutSession(
 }
 
 // ---------------------------------------------------------------------------
-// Get Checkout Session (with expansions needed for saving)
+// Get Checkout Session
 // ---------------------------------------------------------------------------
 export async function getCheckoutSession(sessionId: string) {
   try {
@@ -169,10 +156,7 @@ export async function getCheckoutSession(sessionId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Fetch the customer-facing receipt URL from Stripe.
-//
-// For one-time payments: retrieve the PaymentIntent → latest_charge → receipt_url
-// For subscriptions:     retrieve the latest Invoice → hosted_invoice_url
+// Fetch receipt URL from Stripe
 // ---------------------------------------------------------------------------
 async function fetchReceiptUrl(session: Stripe.Checkout.Session): Promise<string | null> {
   try {
@@ -213,20 +197,16 @@ async function fetchReceiptUrl(session: Stripe.Checkout.Session): Promise<string
 
 // ---------------------------------------------------------------------------
 // Save Order From Session
-// Called on the success page. Handles both one-time and subscription orders.
+// Called on the success page after checkout completes.
 //
-// WEEKLY BILLING MODEL:
-//   - All subscriptions are billed on Fridays (universal anchor).
-//   - Thursday customers are charged the day after their delivery.
-//   - Friday customers are charged on their delivery day.
-//   - Skip cutoff is Thursday 5 PM for all customers.
-//   - skipped_dates starts empty; customers skip self-service before cutoff.
-//   - The Stripe webhook (invoice.upcoming) handles zeroing the invoice.
+// For subscription orders this creates:
+//   1. The orders row (week 1 delivery — the first delivery date)
+//   2. The order_items snapshot
+//   3. The subscriptions row
+//   4. The subscription_items rows
+//   5. Backfills subscription_id on the order row
 //
-// KEY DISTINCTION:
-//   created_at    = when the customer actually purchased.
-//   placed_at     = first delivery date for subscriptions; == created_at for one-time.
-//   delivery_date = chosen YYYY-MM-DD for one-time orders only (null for subscriptions).
+// Subsequent weekly orders are created by the invoice.upcoming webhook.
 // ---------------------------------------------------------------------------
 export async function saveOrderFromSession(sessionId: string) {
   try {
@@ -251,7 +231,7 @@ export async function saveOrderFromSession(sessionId: string) {
       return { error: null, orderId: existingOrder.id }
     }
 
-    // Parse metadata embedded at checkout creation time
+    // Parse metadata
     let cartItems: Array<{
       productId: string
       quantity: number
@@ -269,13 +249,10 @@ export async function saveOrderFromSession(sessionId: string) {
     const deliveryDay = session.metadata?.delivery_day || null
     const isSubscriptionMode = session.mode === "subscription"
 
-    // created_at = real purchase timestamp
     const purchasedAt = session.created
       ? new Date(session.created * 1000).toISOString()
       : new Date().toISOString()
 
-    // For subscriptions: placed_at = first delivery date (next Thursday or Friday)
-    // For one-time: placed_at = purchasedAt
     const firstDeliveryDate =
       isSubscriptionMode && deliveryDay
         ? computeNextDeliveryDate(deliveryDay as "thursday" | "friday")
@@ -285,13 +262,11 @@ export async function saveOrderFromSession(sessionId: string) {
       ? new Date(firstDeliveryDate + "T12:00:00").toISOString()
       : purchasedAt
 
-    // One-time delivery date only (subscriptions don't use this field)
     const oneTimeDeliveryDate =
       !isSubscriptionMode && deliveryDay
         ? computeNextDeliveryDate(deliveryDay as "thursday" | "friday")
         : null
 
-    // Extract Stripe IDs
     const stripePaymentIntentId =
       typeof session.payment_intent === "string"
         ? session.payment_intent
@@ -303,16 +278,32 @@ export async function saveOrderFromSession(sessionId: string) {
         : (session.customer as Stripe.Customer | null)?.id ?? null
 
     const receiptUrl = await fetchReceiptUrl(session)
-    const amountTotal = session.amount_total ?? 0
 
-    // Fetch user profile
+    // For subscriptions with a future billing anchor, Stripe returns amount_total = 0
+    // on the checkout session because no charge is collected at signup time.
+    // Calculate the real weekly total from cart items instead.
+    const cartTotal = cartItems.reduce((sum, ci) => {
+      const product = PRODUCTS.find((p) => p.id === ci.productId)
+      const price = ci.isSubscription
+        ? (product?.subscriptionPriceInCents ?? 0)
+        : (product?.priceInCents ?? 0)
+      return sum + price * ci.quantity
+    }, 0)
+    const amountTotal = isSubscriptionMode ? cartTotal : (session.amount_total ?? cartTotal)
+
+    // Extract Stripe subscription ID early so we can store it on the order row
+    const stripeSubIdForOrder = isSubscriptionMode
+      ? (typeof session.subscription === "string"
+          ? session.subscription
+          : (session.subscription as Stripe.Subscription | null)?.id ?? null)
+      : null
+
     const { data: profile } = await supabase
       .from("profiles")
       .select("*")
       .eq("id", user.id)
       .maybeSingle()
 
-    // Backfill stripe_customer_id on profile if not already set
     if (stripeCustomerId && profile && !profile.stripe_customer_id) {
       await supabase
         .from("profiles")
@@ -335,8 +326,9 @@ export async function saveOrderFromSession(sessionId: string) {
         delivery_zip: profile?.zip || null,
         stripe_session_id: sessionId,
         stripe_payment_intent_id: stripePaymentIntentId,
+        stripe_subscription_id: stripeSubIdForOrder,
         stripe_receipt_url: receiptUrl,
-        delivery_date: oneTimeDeliveryDate,
+        delivery_date: isSubscriptionMode ? firstDeliveryDate : oneTimeDeliveryDate,
         delivery_state: "pending",
         placed_at: placedAt,
         created_at: purchasedAt,
@@ -374,14 +366,12 @@ export async function saveOrderFromSession(sessionId: string) {
     }
 
     // ── 3. Save subscription record (subscription mode only) ────────────────
-    if (session.mode === "subscription") {
+    if (isSubscriptionMode) {
       const stripeSubId =
         typeof session.subscription === "string"
           ? session.subscription
           : (session.subscription as Stripe.Subscription | null)?.id
 
-      // Fetch current_period_end from Stripe — with Friday billing anchor,
-      // this will always be the next Friday.
       let periodEnd: string | null = null
       if (stripeSubId) {
         try {
@@ -436,6 +426,12 @@ export async function saveOrderFromSession(sessionId: string) {
           .insert(subItems)
 
         if (subItemsError) console.error("Error creating subscription items:", subItemsError)
+
+        // ── 3c. Backfill subscription_id on the order row ──────────────────
+        await supabase
+          .from("orders")
+          .update({ subscription_id: sub.id })
+          .eq("id", order.id)
       }
     }
 
