@@ -4,11 +4,36 @@ import { Resend } from 'resend'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-interface OrderEmailData {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Format a YYYY-MM-DD string as "Friday, July 4th" */
+function formatDeliveryDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number)
+  const date = new Date(y, m - 1, d)
+  const weekday = date.toLocaleDateString("en-US", { weekday: "long" })
+  const month = date.toLocaleDateString("en-US", { month: "long" })
+  const day = date.getDate()
+  const suffix =
+    day % 10 === 1 && day !== 11 ? "st" :
+    day % 10 === 2 && day !== 12 ? "nd" :
+    day % 10 === 3 && day !== 13 ? "rd" : "th"
+  return `${weekday}, ${month} ${day}${suffix}`
+}
+
+// ---------------------------------------------------------------------------
+// Order Confirmation Email
+// ---------------------------------------------------------------------------
+
+export interface OrderEmailData {
   customerEmail: string
   customerName: string
   orderId: string
   orderDate: string
+  isSubscription: boolean
+  deliveryDate: string       // YYYY-MM-DD
+  deliveryDay?: string       // "thursday" | "friday" — for subscription copy
   receiptUrl?: string | null
   deliveryAddress: {
     address: string
@@ -19,176 +44,172 @@ interface OrderEmailData {
   items: Array<{
     name: string
     quantity: number
-    price: number
+    price: number            // in cents
   }>
-  subtotal: number
-  total: number
+  subtotal: number           // in cents
+  total: number              // in cents
 }
 
 export async function sendOrderConfirmationEmail(data: OrderEmailData) {
+  const formattedDeliveryDate = formatDeliveryDate(data.deliveryDate)
+  const deliveryDayLabel = data.deliveryDay
+    ? data.deliveryDay.charAt(0).toUpperCase() + data.deliveryDay.slice(1)
+    : "Friday"
+
+  const subject = data.isSubscription
+    ? `Your weekly subscription is confirmed — Modern Milk Maid`
+    : `Order confirmed — Modern Milk Maid`
+
+  const bannerBg = data.isSubscription ? "#5A81A5" : "#85B972"
+  const bannerText = data.isSubscription
+    ? "✓ &nbsp;Your weekly subscription is confirmed"
+    : "✓ &nbsp;Your order is confirmed"
+
+  const bodyIntro = data.isSubscription
+    ? `Your weekly subscription is set up. Fresh milk will be delivered to your door every week — starting ${formattedDeliveryDate}.`
+    : `Your order is in. We'll have it fresh and ready for your delivery day.`
+
+  const deliveryDateLabel = data.isSubscription ? "First Delivery" : "Delivery Date"
+
+  const deliveryDateValue = data.isSubscription
+    ? `${formattedDeliveryDate}<br><span style="font-size:13px;color:#888;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">then every ${deliveryDayLabel}</span>`
+    : formattedDeliveryDate
+
+  const orderSectionLabel = data.isSubscription ? "Weekly Delivery" : "Your Order"
+
+  const itemRows = data.items.map(item => `
+    <div style="display:table-row;">
+      <div style="display:table-cell;padding:14px 0;border-top:1px solid #EDE8DF;font-family:Georgia,serif;font-size:15px;color:#2C3E2D;">
+        ${item.name} &nbsp;<span style="color:#888;font-size:14px;">× ${item.quantity}</span>
+      </div>
+      <div style="display:table-cell;padding:14px 0;border-top:1px solid #EDE8DF;font-family:Georgia,serif;font-size:15px;color:#2C3E2D;text-align:right;">
+        $${(item.price / 100).toFixed(2)}
+      </div>
+    </div>
+  `).join("")
+
+  const totalLabel = data.isSubscription ? "Weekly Total" : "Total"
+  const totalValue = data.isSubscription
+    ? `$${(data.total / 100).toFixed(2)}<span style="font-size:13px;font-weight:normal;color:#888;">/wk</span>`
+    : `$${(data.total / 100).toFixed(2)}`
+
+  const subscriptionNote = data.isSubscription ? `
+    <div style="margin-top:28px;padding:20px 24px;background:#eef3f8;border-left:3px solid #5A81A5;border-radius:0 4px 4px 0;">
+      <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;color:#3a5a7a;line-height:1.6;margin:0;">
+        You can skip a delivery, change your milk, or manage your subscription anytime from your
+        <a href="${process.env.NEXT_PUBLIC_APP_URL ?? 'https://modernmilkmaid.com'}/account" style="color:#5A81A5;text-decoration:underline;">account page</a>.
+        Skips must be requested by Wednesday at 5 PM for Thursday deliveries, or Thursday at 5 PM for Friday deliveries.
+      </p>
+    </div>
+  ` : ""
+
+  const receiptBlock = data.receiptUrl ? `
+    <div style="margin-top:36px;padding:24px;background:#F0EBE2;border-radius:4px;text-align:center;">
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;color:#666;margin-bottom:14px;">Need a copy of your payment receipt?</div>
+      <a href="${data.receiptUrl}" style="display:inline-block;padding:12px 28px;background:#2C3E2D;color:#FAF7F2;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;font-weight:600;letter-spacing:0.5px;border-radius:3px;">View Payment Receipt</a>
+    </div>
+  ` : ""
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"></head>
+      <body style="margin:0;padding:0;background:#e8e3db;">
+        <div style="max-width:600px;margin:0 auto;background:#FAF7F2;border-radius:4px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <div style="background:#2C3E2D;padding:44px 48px 36px;text-align:center;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:4px;color:#85B972;text-transform:uppercase;margin-bottom:12px;">North Fork, Long Island</div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:34px;font-weight:normal;color:#FAF7F2;letter-spacing:1px;line-height:1.1;">Modern Milk Maid</div>
+            <div style="margin-top:16px;display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <span style="font-family:Georgia,serif;font-size:18px;color:#85B972;margin:0 12px;">&#10023;</span>
+            <div style="display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#a8bfab;letter-spacing:2px;text-transform:uppercase;margin-top:14px;">Fresh Plant-Based Milks</div>
+          </div>
+
+          <!-- Banner -->
+          <div style="background:${bannerBg};padding:16px 48px;text-align:center;">
+            <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#ffffff;letter-spacing:0.5px;">${bannerText}</span>
+          </div>
+
+          <!-- Body -->
+          <div style="padding:44px 48px;">
+
+            <p style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#2C3E2D;margin:0 0 8px;">Hi ${data.customerName},</p>
+            <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;color:#5a5a4e;line-height:1.7;margin:0 0 36px;">${bodyIntro}</p>
+
+            <!-- Delivery info -->
+            <div style="display:table;width:100%;border-collapse:separate;margin-bottom:36px;">
+              <div style="display:table-row;">
+                <div style="display:table-cell;width:50%;padding:20px 20px 20px 0;vertical-align:top;border-top:2px solid #2C3E2D;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Delivery Address</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.6;">
+                    ${data.deliveryAddress.address}<br>
+                    ${data.deliveryAddress.city}, ${data.deliveryAddress.state} ${data.deliveryAddress.zip}
+                  </div>
+                </div>
+                <div style="display:table-cell;width:50%;padding:20px 0 20px 24px;vertical-align:top;border-top:2px solid #2C3E2D;border-left:1px solid #EDE8DF;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">${deliveryDateLabel}</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.4;">${deliveryDateValue}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Items -->
+            <div style="margin-bottom:8px;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:16px;">${orderSectionLabel}</div>
+              <div style="display:table;width:100%;border-collapse:collapse;">
+                ${itemRows}
+                <div style="display:table-row;">
+                  <div style="display:table-cell;padding:18px 0 0;border-top:2px solid #2C3E2D;font-family:Georgia,serif;font-size:16px;font-weight:bold;color:#2C3E2D;">${totalLabel}</div>
+                  <div style="display:table-cell;padding:18px 0 0;border-top:2px solid #2C3E2D;font-family:Georgia,serif;font-size:18px;font-weight:bold;color:#2C3E2D;text-align:right;">${totalValue}</div>
+                </div>
+              </div>
+            </div>
+
+            ${subscriptionNote}
+            ${receiptBlock}
+
+            <!-- Sign-off -->
+            <div style="margin-top:44px;padding-top:32px;border-top:1px solid #EDE8DF;">
+              <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#5a5a4e;line-height:1.7;margin:0;">Any questions? Just reply here — we're always happy to help.</p>
+            </div>
+
+          </div>
+
+          <!-- Footer -->
+          <div style="background:#2C3E2D;padding:28px 48px;text-align:center;">
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#85B972;">Modern Milk Maid &nbsp;·&nbsp; North Fork, Long Island, NY</div>
+          </div>
+
+        </div>
+      </body>
+    </html>
+  `
+
   try {
     const { data: emailData, error } = await resend.emails.send({
       from: 'Modern Milk Maid <onboarding@resend.dev>',
       to: [data.customerEmail],
-      subject: `Order Confirmation - Modern Milk Maid`,
-      html: `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="utf-8">
-            <style>
-              body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 20px;
-              }
-              .header {
-                text-align: center;
-                padding: 30px 0;
-                border-bottom: 2px solid #7C9885;
-              }
-              .header h1 {
-                margin: 0;
-                color: #7C9885;
-                font-size: 28px;
-              }
-              .content {
-                padding: 30px 0;
-              }
-              .order-details {
-                background: #f9f9f9;
-                padding: 20px;
-                border-radius: 8px;
-                margin: 20px 0;
-              }
-              .order-details h2 {
-                margin-top: 0;
-                color: #333;
-                font-size: 18px;
-              }
-              .order-details p {
-                margin: 5px 0;
-              }
-              .items-table {
-                width: 100%;
-                border-collapse: collapse;
-                margin: 20px 0;
-              }
-              .items-table th {
-                background: #7C9885;
-                color: white;
-                padding: 12px;
-                text-align: left;
-              }
-              .items-table td {
-                padding: 12px;
-                border-bottom: 1px solid #ddd;
-              }
-              .total-row {
-                font-weight: bold;
-                font-size: 18px;
-              }
-              .receipt-btn {
-                display: inline-block;
-                margin: 8px 0 4px;
-                padding: 10px 20px;
-                background: #7C9885;
-                color: #ffffff !important;
-                text-decoration: none;
-                border-radius: 6px;
-                font-size: 14px;
-                font-weight: 600;
-                letter-spacing: 0.3px;
-              }
-              .footer {
-                text-align: center;
-                padding: 30px 0;
-                border-top: 1px solid #ddd;
-                color: #666;
-                font-size: 14px;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>Modern Milk Maid</h1>
-              <p style="color: #666; font-size: 14px; text-transform: uppercase; letter-spacing: 2px;">Plant Based Milks</p>
-            </div>
-
-            <div class="content">
-              <h2 style="color: #7C9885;">Thank You for Your Order!</h2>
-              <p>Hi ${data.customerName},</p>
-              <p>Your order has been confirmed and will be prepared fresh for delivery.</p>
-
-              <div class="order-details">
-                <h2>Order Details</h2>
-                <p><strong>Order Number:</strong> ${data.orderId}</p>
-                <p><strong>Order Date:</strong> ${data.orderDate}</p>
-                ${data.receiptUrl ? `
-                <p style="margin-top: 14px;">
-                  <a href="${data.receiptUrl}" class="receipt-btn" target="_blank">View Payment Receipt</a>
-                </p>
-                <p style="font-size: 13px; color: #888; margin-top: 6px;">
-                  Your receipt includes card details and payment confirmation from Stripe.
-                </p>
-                ` : ''}
-              </div>
-
-              <div class="order-details">
-                <h2>Delivery Address</h2>
-                <p>${data.deliveryAddress.address}</p>
-                <p>${data.deliveryAddress.city}, ${data.deliveryAddress.state} ${data.deliveryAddress.zip}</p>
-              </div>
-
-              <table class="items-table">
-                <thead>
-                  <tr>
-                    <th>Item</th>
-                    <th>Quantity</th>
-                    <th>Price</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${data.items.map(item => `
-                    <tr>
-                      <td>${item.name}</td>
-                      <td>${item.quantity}</td>
-                      <td>$${(item.price / 100).toFixed(2)}</td>
-                    </tr>
-                  `).join('')}
-                  <tr class="total-row">
-                    <td colspan="2">Total</td>
-                    <td>$${(data.total / 100).toFixed(2)}</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <p>We'll be in touch soon with your delivery details. If you have any questions, feel free to reply to this email.</p>
-            </div>
-
-            <div class="footer">
-              <p>Modern Milk Maid - Fresh Plant-Based Milk Delivery</p>
-              <p>North Fork, Long Island, NY</p>
-            </div>
-          </body>
-        </html>
-      `,
+      subject,
+      html,
     })
 
     if (error) {
-      console.error('Error sending email:', error)
+      console.error('Error sending order confirmation email:', error)
       return { success: false, error }
     }
 
     return { success: true, data: emailData }
   } catch (error) {
-    console.error('Error sending email:', error)
+    console.error('Error sending order confirmation email:', error)
     return { success: false, error }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Contact Notification Email (unchanged)
+// ---------------------------------------------------------------------------
 
 interface ContactNotificationData {
   name: string
@@ -223,16 +244,14 @@ export async function sendContactNotificationEmail(data: ContactNotificationData
               .header {
                 text-align: center;
                 padding: 24px 0;
-                border-bottom: 2px solid #7C9885;
+                border-bottom: 2px solid #85B972;
               }
               .header h1 {
                 margin: 0;
-                color: #7C9885;
+                color: #85B972;
                 font-size: 24px;
               }
-              .content {
-                padding: 24px 0;
-              }
+              .content { padding: 24px 0; }
               .label {
                 font-size: 12px;
                 text-transform: uppercase;
@@ -247,9 +266,7 @@ export async function sendContactNotificationEmail(data: ContactNotificationData
                 margin-bottom: 16px;
                 font-size: 15px;
               }
-              .message-body {
-                white-space: pre-wrap;
-              }
+              .message-body { white-space: pre-wrap; }
               .footer {
                 text-align: center;
                 padding: 24px 0 0;
@@ -264,25 +281,19 @@ export async function sendContactNotificationEmail(data: ContactNotificationData
               <h1>Modern Milk Maid</h1>
               <p style="color:#666; font-size:13px; margin:4px 0 0;">New contact form submission</p>
             </div>
-
             <div class="content">
               <p class="label">Name</p>
               <div class="field">${data.name}</div>
-
               <p class="label">Email</p>
-              <div class="field"><a href="mailto:${data.email}" style="color:#7C9885;">${data.email}</a></div>
-
+              <div class="field"><a href="mailto:${data.email}" style="color:#85B972;">${data.email}</a></div>
               <p class="label">Phone</p>
               <div class="field">${data.phone}</div>
-
               <p class="label">Message</p>
               <div class="field message-body">${data.message}</div>
-
               <p style="font-size:13px; color:#666;">
                 You can reply directly to this email to respond to ${data.name}.
               </p>
             </div>
-
             <div class="footer">
               <p>Modern Milk Maid · North Fork, Long Island, NY</p>
             </div>

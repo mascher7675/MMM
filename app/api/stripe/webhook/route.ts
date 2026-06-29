@@ -5,10 +5,6 @@ import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import Stripe from "stripe"
 
-// ---------------------------------------------------------------------------
-// Stripe requires the raw request body to verify webhook signatures.
-// Next.js App Router gives us access via request.text().
-// ---------------------------------------------------------------------------
 export const runtime = "nodejs"
 
 // ---------------------------------------------------------------------------
@@ -42,9 +38,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Webhook secret not configured" }, { status: 500 })
   }
 
-  // ---------------------------------------------------------------------------
-  // Verify the event came from Stripe
-  // ---------------------------------------------------------------------------
   let event: Stripe.Event
   try {
     event = stripe.webhooks.constructEvent(body, signature, webhookSecret)
@@ -54,9 +47,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 })
   }
 
-  // ---------------------------------------------------------------------------
-  // Route events
-  // ---------------------------------------------------------------------------
   try {
     switch (event.type) {
       case "invoice.upcoming":
@@ -64,13 +54,11 @@ export async function POST(request: NextRequest) {
         break
 
       default:
-        // Acknowledge but ignore unhandled events
         break
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Handler error"
     console.error(`[webhook] Error handling ${event.type}:`, message)
-    // Return 200 anyway so Stripe doesn't retry — we log the error for investigation
     return NextResponse.json({ error: message }, { status: 200 })
   }
 
@@ -79,35 +67,15 @@ export async function POST(request: NextRequest) {
 
 // ---------------------------------------------------------------------------
 // invoice.upcoming handler
-//
-// Stripe fires this ~1 hour before the invoice finalizes (Thursday ~11 PM,
-// since all subscriptions are anchored to Friday noon UTC).
-//
-// All customers share the same skip cutoff: Thursday 5 PM EST.
-// This fires after the cutoff, so skipped_dates is finalized by the time
-// this runs.
-//
-// Logic:
-//   1. Find the subscription in our DB by stripe_subscription_id via
-//      get_subscription_for_webhook() — a SECURITY DEFINER function that
-//      bypasses RLS so the sessionless webhook request can read the DB.
-//   2. Determine the delivery date for this billing period.
-//   3. Create the weekly delivery order row (confirmed or skipped) via
-//      create_weekly_delivery_order() — also SECURITY DEFINER.
-//   4. If skipped: apply a credit to zero out the invoice, remove from skipped_dates.
 // ---------------------------------------------------------------------------
 async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
-  // The 2026-02-25.clover API version moved subscription off the Invoice type.
   const invoiceAny = invoice as unknown as { subscription?: string | { id: string } }
   const stripeSubscriptionId =
     typeof invoiceAny.subscription === "string"
       ? invoiceAny.subscription
       : invoiceAny.subscription?.id
 
-  if (!stripeSubscriptionId) {
-    // Not a subscription invoice — nothing to do
-    return
-  }
+  if (!stripeSubscriptionId) return
 
   const supabase = await createClient()
 
@@ -123,17 +91,8 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     return
   }
 
-  if (sub.status !== "active") {
-    return
-  }
+  if (sub.status !== "active") return
 
-  // ---------------------------------------------------------------------------
-  // Determine the delivery date this invoice is charging for.
-  //
-  // period_start is always a Friday (universal Friday billing anchor).
-  // Friday customers:   delivery = that same Friday
-  // Thursday customers: delivery = the Thursday immediately before period_start
-  // ---------------------------------------------------------------------------
   const periodStartDate = unixToESTDateStr(invoice.period_start)
   const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day as "thursday" | "friday")
 
@@ -145,12 +104,6 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
   const skippedDates: string[] = Array.isArray(sub.skipped_dates) ? sub.skipped_dates : []
   const isSkipped = skippedDates.includes(deliveryDate)
 
-  // ---------------------------------------------------------------------------
-  // Create the weekly delivery order row.
-  // This happens for both skipped and confirmed weeks so the order always
-  // exists by Thursday evening — before admins build delivery routes.
-  // Idempotency is handled inside create_weekly_delivery_order.
-  // ---------------------------------------------------------------------------
   const { data: orderResult, error: orderError } = await supabase
     .rpc("create_weekly_delivery_order", {
       p_subscription_id: sub.id,
@@ -161,7 +114,6 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
 
   if (orderError) {
     console.error(`[webhook] Failed to create weekly delivery order for sub ${sub.id}:`, orderError.message)
-    // Don't return — still need to apply skip credit if applicable
   } else {
     const result = orderResult as { error: string | null; skipped_duplicate?: boolean; order_id?: string }
     if (result?.skipped_duplicate) {
@@ -171,19 +123,11 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // If skipped: apply Stripe credit to zero out the invoice, then remove
-  // this date from skipped_dates to prevent double-crediting on retry.
-  // ---------------------------------------------------------------------------
-  if (!isSkipped) {
-    return
-  }
+  if (!isSkipped) return
 
   const amountToCredit = invoice.amount_due
 
-  if (amountToCredit <= 0) {
-    // Invoice already zero — no credit needed, but still clean up skipped_dates
-  } else {
+  if (amountToCredit > 0) {
     const customerId =
       typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id
 
@@ -206,7 +150,6 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     })
   }
 
-  // Remove the date from skipped_dates after processing
   const newSkippedDates = skippedDates.filter((d) => d !== deliveryDate)
 
   const { error: updateError } = await supabase
@@ -223,19 +166,14 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
 }
 
 // ---------------------------------------------------------------------------
-// Given a period_start date string (YYYY-MM-DD, always a Friday) and the
-// customer's delivery day, find the delivery date for that billing period.
-//
-// Walk BACKWARD from period_start to find the matching weekday:
-//   - Friday customers:   period_start IS the delivery date (0 days back)
-//   - Thursday customers: delivery was the day before (1 day back)
+// Utility: given a period_start date (always a Friday) and delivery day,
+// find the matching delivery date for that billing period.
 // ---------------------------------------------------------------------------
 function getDeliveryDateForPeriod(
   periodStart: string,
   deliveryDay: "thursday" | "friday"
 ): string | null {
   const targetDayNum = deliveryDay === "friday" ? 5 : 4
-
   const [y, m, d] = periodStart.split("-").map(Number)
   const date = new Date(y, m - 1, d)
 

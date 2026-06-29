@@ -17,13 +17,6 @@ interface CartItem {
 
 // ---------------------------------------------------------------------------
 // Compute the next Friday as a Unix timestamp (seconds).
-//
-// All subscriptions are anchored to Friday regardless of delivery day so that:
-//   - Friday customers are charged on delivery day
-//   - Thursday customers are charged the day after delivery
-//   - invoice.upcoming always fires Thursday ~11 PM for everyone
-//   - The skip cutoff (Thursday 5 PM) is the same for all customers
-//   - Switching delivery days never requires a Stripe billing anchor change
 // ---------------------------------------------------------------------------
 function computeFridayBillingAnchorUnix(): number {
   const dateStr = computeNextDeliveryDate("friday")
@@ -198,15 +191,6 @@ async function fetchReceiptUrl(session: Stripe.Checkout.Session): Promise<string
 // ---------------------------------------------------------------------------
 // Save Order From Session
 // Called on the success page after checkout completes.
-//
-// For subscription orders this creates:
-//   1. The orders row (week 1 delivery — the first delivery date)
-//   2. The order_items snapshot
-//   3. The subscriptions row
-//   4. The subscription_items rows
-//   5. Backfills subscription_id on the order row
-//
-// Subsequent weekly orders are created by the invoice.upcoming webhook.
 // ---------------------------------------------------------------------------
 export async function saveOrderFromSession(sessionId: string) {
   try {
@@ -246,26 +230,18 @@ export async function saveOrderFromSession(sessionId: string) {
       console.error("Failed to parse cart_items from session metadata")
     }
 
-    const deliveryDay = session.metadata?.delivery_day || null
+    const deliveryDay = (session.metadata?.delivery_day || "friday") as "thursday" | "friday"
     const isSubscriptionMode = session.mode === "subscription"
 
     const purchasedAt = session.created
       ? new Date(session.created * 1000).toISOString()
       : new Date().toISOString()
 
-    const firstDeliveryDate =
-      isSubscriptionMode && deliveryDay
-        ? computeNextDeliveryDate(deliveryDay as "thursday" | "friday")
-        : null
+    const deliveryDate = computeNextDeliveryDate(deliveryDay)
 
-    const placedAt = firstDeliveryDate
-      ? new Date(firstDeliveryDate + "T12:00:00").toISOString()
+    const placedAt = isSubscriptionMode
+      ? new Date(deliveryDate + "T12:00:00").toISOString()
       : purchasedAt
-
-    const oneTimeDeliveryDate =
-      !isSubscriptionMode && deliveryDay
-        ? computeNextDeliveryDate(deliveryDay as "thursday" | "friday")
-        : null
 
     const stripePaymentIntentId =
       typeof session.payment_intent === "string"
@@ -291,7 +267,6 @@ export async function saveOrderFromSession(sessionId: string) {
     }, 0)
     const amountTotal = isSubscriptionMode ? cartTotal : (session.amount_total ?? cartTotal)
 
-    // Extract Stripe subscription ID early so we can store it on the order row
     const stripeSubIdForOrder = isSubscriptionMode
       ? (typeof session.subscription === "string"
           ? session.subscription
@@ -328,7 +303,7 @@ export async function saveOrderFromSession(sessionId: string) {
         stripe_payment_intent_id: stripePaymentIntentId,
         stripe_subscription_id: stripeSubIdForOrder,
         stripe_receipt_url: receiptUrl,
-        delivery_date: isSubscriptionMode ? firstDeliveryDate : oneTimeDeliveryDate,
+        delivery_date: deliveryDate,
         delivery_state: "pending",
         placed_at: placedAt,
         created_at: purchasedAt,
@@ -386,14 +361,13 @@ export async function saveOrderFromSession(sessionId: string) {
         }
       }
 
-      // ── 3a. Insert subscription row ────────────────────────────────────────
       const { data: sub, error: subError } = await supabase
         .from("subscriptions")
         .insert({
           user_id: user.id,
           stripe_subscription_id: stripeSubId ?? null,
           status: "active",
-          delivery_day: deliveryDay ?? "thursday",
+          delivery_day: deliveryDay,
           cancel_at_period_end: false,
           current_period_end: periodEnd,
           skipped_dates: [],
@@ -407,7 +381,6 @@ export async function saveOrderFromSession(sessionId: string) {
         console.error("Error creating subscription:", subError)
       }
 
-      // ── 3b. Insert subscription_items ──────────────────────────────────────
       if (sub && cartItems.length > 0) {
         const subItems = cartItems.map((ci) => {
           const product = PRODUCTS.find((p) => p.id === ci.productId)
@@ -427,7 +400,6 @@ export async function saveOrderFromSession(sessionId: string) {
 
         if (subItemsError) console.error("Error creating subscription items:", subItemsError)
 
-        // ── 3c. Backfill subscription_id on the order row ──────────────────
         await supabase
           .from("orders")
           .update({ subscription_id: sub.id })
@@ -436,38 +408,44 @@ export async function saveOrderFromSession(sessionId: string) {
     }
 
     // ── 4. Send confirmation email ──────────────────────────────────────────
-    if (profile && user.email) {
+    if (user.email) {
+      const customerName =
+        `${profile?.first_name || ""} ${profile?.last_name || ""}`.trim() || "there"
+
+      const emailItems = cartItems.map((ci) => {
+        const product = PRODUCTS.find((p) => p.id === ci.productId)
+        return {
+          name: product?.name || ci.productId,
+          quantity: ci.quantity,
+          price: ci.isSubscription
+            ? (product?.subscriptionPriceInCents || 0)
+            : (product?.priceInCents || 0),
+        }
+      })
+
       try {
         await sendOrderConfirmationEmail({
           customerEmail: user.email,
-          customerName:
-            `${profile.first_name || ""} ${profile.last_name || ""}`.trim() ||
-            "Valued Customer",
-          orderId: order.id.slice(-8).toUpperCase(),
+          customerName,
+          orderId: order.order_code ?? order.id.slice(-8).toUpperCase(),
           orderDate: new Date(purchasedAt).toLocaleDateString("en-US", {
             month: "long",
             day: "numeric",
             year: "numeric",
           }),
+          isSubscription: isSubscriptionMode,
+          deliveryDate,
+          deliveryDay,
           receiptUrl,
           deliveryAddress: {
-            address: profile.address || "",
-            city: profile.city || "",
-            state: profile.state || "",
-            zip: profile.zip || "",
+            address: profile?.address || "",
+            city: profile?.city || "",
+            state: profile?.state || "NY",
+            zip: profile?.zip || "",
           },
-          items: cartItems.map((ci) => {
-            const product = PRODUCTS.find((p) => p.id === ci.productId)
-            return {
-              name: product?.name || ci.productId,
-              quantity: ci.quantity,
-              price: ci.isSubscription
-                ? (product?.subscriptionPriceInCents || 0)
-                : (product?.priceInCents || 0),
-            }
-          }),
-          subtotal: order.subtotal,
-          total: order.total,
+          items: emailItems,
+          subtotal: amountTotal,
+          total: amountTotal,
         })
       } catch (emailError) {
         console.error("Failed to send confirmation email:", emailError)
