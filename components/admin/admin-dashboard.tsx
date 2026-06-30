@@ -24,10 +24,6 @@ interface Props {
 export function AdminDashboard({ adminName, stats, customers, orders, subscriptions, messages }: Props) {
   const [tab, setTab] = useState<AdminTab>("overview")
 
-  // Pending pause requests show as a separate badge on the Subscriptions tab
-  // so the admin immediately knows action is needed without opening the tab.
-  const pendingPauseCount = subscriptions.filter((s) => s.pause_status === "pending").length
-
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "overview",      label: "Overview",      icon: <TrendingUp className="h-4 w-4" /> },
     { id: "orders",        label: "Orders",        icon: <ShoppingBag className="h-4 w-4" />, badge: orders.filter(o => o.delivery_state === "pending").length },
@@ -35,10 +31,7 @@ export function AdminDashboard({ adminName, stats, customers, orders, subscripti
       id: "subscriptions",
       label: "Subscriptions",
       icon: <Repeat className="h-4 w-4" />,
-      // Pending pauses take priority over plain active count in the badge
-      badge: pendingPauseCount > 0
-        ? pendingPauseCount
-        : subscriptions.filter(s => s.status === "active").length,
+      badge: subscriptions.filter(s => s.status === "active").length,
     },
     { id: "customers",     label: "Customers",     icon: <Users className="h-4 w-4" /> },
     { id: "messages",      label: "Messages",      icon: <MessageSquare className="h-4 w-4" />, badge: stats.unreadMessages || undefined },
@@ -62,7 +55,7 @@ export function AdminDashboard({ adminName, stats, customers, orders, subscripti
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+            className={`cursor-pointer relative flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
               tab === t.id
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -71,14 +64,7 @@ export function AdminDashboard({ adminName, stats, customers, orders, subscripti
             {t.icon}
             {t.label}
             {t.badge != null && t.badge > 0 && (
-              <span
-                className={`flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ${
-                  // Amber badge for pending pause requests, green for normal counts
-                  t.id === "subscriptions" && pendingPauseCount > 0
-                    ? "bg-amber-500"
-                    : "bg-[#7C9885]"
-                }`}
-              >
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#7C9885] px-1 text-[10px] font-bold text-white">
                 {t.badge}
               </span>
             )}

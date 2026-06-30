@@ -54,11 +54,15 @@ export const MSG_TYPE_LABEL: Record<string, string> = {
  
 export const DELIVERY_DAYS = ["thursday", "friday"]
  
-/** Returns the next N upcoming Thursdays (day=4) and Fridays (day=5), sorted ascending */
+/**
+ * Returns the next N upcoming Thursdays and Fridays, sorted ascending.
+ * Admin version — no cutoff logic. Always includes today if it's a Thu/Fri,
+ * so the admin can add a last-minute cash customer on the day of delivery.
+ */
 export function getUpcomingThursFri(count = 8): { label: string; value: string; dayName: string }[] {
   const results: { label: string; value: string; dayName: string }[] = []
   const d = new Date()
-  d.setHours(0, 0, 0, 0)
+  d.setHours(0, 0, 0, 0) // start from today midnight — include today if it's Thu/Fri
   while (results.length < count) {
     const day = d.getDay()
     if (day === 4 || day === 5) {

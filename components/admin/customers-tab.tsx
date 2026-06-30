@@ -80,7 +80,7 @@ function OrderHistoryDrawer({ customer, onClose }: OrderHistoryDrawerProps) {
           </div>
           <button
             onClick={onClose}
-            className="rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+            className="cursor-pointer rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
@@ -92,7 +92,7 @@ function OrderHistoryDrawer({ customer, onClose }: OrderHistoryDrawerProps) {
             <button
               key={t}
               onClick={() => setActiveTab(t)}
-              className={`flex items-center gap-1.5 pb-3 pt-3 text-sm font-medium border-b-2 transition-colors ${
+              className={`cursor-pointer flex items-center gap-1.5 pb-3 pt-3 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === t
                   ? "border-[#7C9885] text-[#7C9885]"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -232,6 +232,51 @@ function OrderHistoryDrawer({ customer, onClose }: OrderHistoryDrawerProps) {
   )
 }
 
+// ── Delete Confirm Modal ──────────────────────────────────────────────────────
+
+interface DeleteConfirmModalProps {
+  customer: AdminCustomer
+  onClose: () => void
+  onConfirm: () => void
+}
+
+function DeleteConfirmModal({ customer, onClose, onConfirm }: DeleteConfirmModalProps) {
+  const name = [customer.first_name, customer.last_name].filter(Boolean).join(" ") || "this customer"
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm rounded-xl border border-border bg-card shadow-xl p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100">
+            <Trash2 className="h-5 w-5 text-red-600" />
+          </div>
+          <div>
+            <p className="font-semibold text-foreground">Delete cash customer?</p>
+            <p className="text-xs text-muted-foreground mt-0.5">This cannot be undone.</p>
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          You are about to permanently delete <span className="font-medium text-foreground">{name}</span> and all their associated data.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="cursor-pointer rounded-lg border border-border px-4 py-2 text-sm hover:bg-secondary transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
+          >
+            Yes, delete
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
 export function CustomersTab({ customers }: Props) {
@@ -240,7 +285,7 @@ export function CustomersTab({ customers }: Props) {
   const [showModal, setShowModal] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<AdminCustomer | null>(null)
   const [historyCustomer, setHistoryCustomer] = useState<AdminCustomer | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<AdminCustomer | null>(null)
   const [, startTransition] = useTransition()
 
   const filtered = customers.filter(c => {
@@ -274,6 +319,17 @@ export function CustomersTab({ customers }: Props) {
           onClose={() => setEditingCustomer(null)}
         />
       )}
+      {deleteConfirmCustomer && (
+        <DeleteConfirmModal
+          customer={deleteConfirmCustomer}
+          onClose={() => setDeleteConfirmCustomer(null)}
+          onConfirm={() => {
+            const id = deleteConfirmCustomer.id
+            setDeleteConfirmCustomer(null)
+            startTransition(() => { void deleteCashCustomer(id) })
+          }}
+        />
+      )}
       {historyCustomer && (
         <OrderHistoryDrawer
           customer={historyCustomer}
@@ -303,7 +359,7 @@ export function CustomersTab({ customers }: Props) {
       <div className="flex items-center gap-2 flex-wrap">
         {(["all", "online", "cash"] as const).map(f => (
           <button key={f} onClick={() => setFilterType(f)}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               filterType === f ? "bg-[#7C9885] text-white" : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}>
             {f === "all" ? `All (${customers.length})` :
@@ -394,7 +450,7 @@ export function CustomersTab({ customers }: Props) {
                 <td className="px-4 py-3 whitespace-nowrap">
                   <button
                     onClick={() => setHistoryCustomer(c)}
-                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground border border-border hover:border-[#7C9885] hover:text-[#7C9885] hover:bg-[#7C9885]/5 transition-colors"
+                    className="cursor-pointer flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground border border-border hover:border-[#7C9885] hover:text-[#7C9885] hover:bg-[#7C9885]/5 transition-colors"
                     title="View order history"
                   >
                     <History className="h-3.5 w-3.5" />
@@ -406,35 +462,18 @@ export function CustomersTab({ customers }: Props) {
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => setEditingCustomer(c)}
-                        className="rounded-md p-1 text-muted-foreground hover:bg-[#7C9885]/10 hover:text-[#7C9885] transition-colors"
+                        className="cursor-pointer rounded-md p-1 text-muted-foreground hover:bg-[#7C9885]/10 hover:text-[#7C9885] transition-colors"
                         title="Edit cash customer"
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>
-                      {deletingId === c.id ? (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              setDeletingId(null)
-                              startTransition(() => { void deleteCashCustomer(c.id) })
-                            }}
-                            className="text-xs font-bold text-red-700 hover:text-red-900"
-                          >
-                            Yes
-                          </button>
-                          <button onClick={() => setDeletingId(null)} className="text-xs text-muted-foreground">
-                            No
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setDeletingId(c.id)}
-                          className="rounded-md p-1 text-muted-foreground hover:bg-red-50 hover:text-red-500 transition-colors"
-                          title="Delete cash customer"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setDeleteConfirmCustomer(c)}
+                        className="cursor-pointer rounded-md p-1 text-muted-foreground hover:bg-red-50 hover:text-red-500 transition-colors"
+                        title="Delete cash customer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   )}
                 </td>

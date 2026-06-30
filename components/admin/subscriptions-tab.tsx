@@ -2,6 +2,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
+import { useRouter } from "next/navigation"
 import { ChevronDown, ChevronUp, Mail, SkipForward, PlayCircle, ExternalLink, X } from "lucide-react"
 import {
   adminSkipWeeklyDelivery,
@@ -170,6 +171,7 @@ function SkipModal({ sub, onClose, onSuccess }: SkipModalProps) {
 // Main component
 // ---------------------------------------------------------------------------
 export function SubscriptionsTab({ subscriptions }: Props) {
+  const router = useRouter()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [skipModalSubId, setSkipModalSubId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
@@ -195,7 +197,10 @@ export function SubscriptionsTab({ subscriptions }: Props) {
         <SkipModal
           sub={skipModalSub}
           onClose={() => setSkipModalSubId(null)}
-          onSuccess={() => setSkipModalSubId(null)}
+          onSuccess={() => {
+            setSkipModalSubId(null)
+            router.refresh()
+          }}
         />
       )}
 
@@ -226,7 +231,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
         const hasSkips = skippedDates.length > 0
 
         return (
-          <div key={sub.id} className="rounded-lg border border-border overflow-hidden">
+          <div key={sub.id} className="rounded-lg border border-border bg-card overflow-hidden">
             <button
               onClick={() => toggle(sub.id)}
               className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-secondary/40"
@@ -303,7 +308,10 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                         <span key={d} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
                           {formatDate(d)}
                           <button
-                            onClick={() => startTransition(() => { void adminUnskipWeeklyDelivery(sub.id, d) })}
+                            onClick={() => startTransition(async () => {
+                              await adminUnskipWeeklyDelivery(sub.id, d)
+                              router.refresh()
+                            })}
                             className="ml-0.5 hover:text-amber-600"
                             title="Remove skip"
                           >
@@ -334,7 +342,10 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                     {/* Active */}
                     <button
                       onClick={() =>
-                        startTransition(() => { void adminUpdateSubscriptionStatus(sub.id, "active") })
+                        startTransition(async () => {
+                          await adminUpdateSubscriptionStatus(sub.id, "active")
+                          router.refresh()
+                        })
                       }
                       className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                         sub.status === "active"
@@ -357,7 +368,10 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                     {/* Cancelled */}
                     <button
                       onClick={() =>
-                        startTransition(() => { void adminUpdateSubscriptionStatus(sub.id, "cancelled") })
+                        startTransition(async () => {
+                          await adminUpdateSubscriptionStatus(sub.id, "cancelled")
+                          router.refresh()
+                        })
                       }
                       className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
                         sub.status === "cancelled"

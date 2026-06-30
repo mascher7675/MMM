@@ -46,7 +46,7 @@ export function MessagesTab({ messages }: Props) {
           <button
             key={f}
             onClick={() => changeFilter(f)}
-            className={`relative rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            className={`relative cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               filter === f ? "bg-[#7C9885] text-white" : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -90,7 +90,7 @@ export function MessagesTab({ messages }: Props) {
                   startTransition(() => { void updateMessageStatus(msg.id, "read") })
                 }
               }}
-              className="flex w-full items-center gap-4 p-4 text-left hover:bg-secondary/30 transition-colors"
+              className="flex w-full cursor-pointer items-center gap-4 p-4 text-left hover:bg-secondary/30 transition-colors"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -164,22 +164,21 @@ export function MessagesTab({ messages }: Props) {
                     </p>
                   )}
                 </div>
+
                 <div className="flex gap-2">
-                  {msg.status !== "read" && (
-                    <button onClick={() => startTransition(() => { void updateMessageStatus(msg.id, "read") })}
-                      className="rounded-md border border-border bg-card px-3 py-1 text-xs hover:bg-secondary transition-colors">
-                      Mark Read
-                    </button>
-                  )}
                   {msg.status !== "resolved" && (
-                    <button onClick={() => startTransition(() => { void updateMessageStatus(msg.id, "resolved") })}
-                      className="rounded-md bg-[#7C9885] px-3 py-1 text-xs font-medium text-white hover:bg-[#6a8673] transition-colors">
+                    <button
+                      onClick={() => startTransition(() => { void updateMessageStatus(msg.id, "resolved") })}
+                      className="cursor-pointer rounded-md bg-[#7C9885] px-3 py-1 text-xs font-medium text-white hover:bg-[#6a8673] transition-colors"
+                    >
                       ✓ Resolve
                     </button>
                   )}
                   {msg.status === "resolved" && (
-                    <button onClick={() => startTransition(() => { void updateMessageStatus(msg.id, "unread") })}
-                      className="rounded-md border border-border bg-card px-3 py-1 text-xs hover:bg-secondary transition-colors">
+                    <button
+                      onClick={() => startTransition(() => { void updateMessageStatus(msg.id, "read") })}
+                      className="cursor-pointer rounded-md border border-border bg-card px-3 py-1 text-xs hover:bg-secondary transition-colors"
+                    >
                       Reopen
                     </button>
                   )}
@@ -195,7 +194,7 @@ export function MessagesTab({ messages }: Props) {
           <button
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             disabled={safePage === 1}
-            className="flex items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40 disabled:cursor-default"
           >
             <ChevronLeft className="h-3.5 w-3.5" /> Prev
           </button>
@@ -203,7 +202,7 @@ export function MessagesTab({ messages }: Props) {
             <button
               key={n}
               onClick={() => setPage(n)}
-              className={`h-8 min-w-8 rounded-md border px-2 text-xs font-medium transition-colors ${
+              className={`h-8 min-w-8 cursor-pointer rounded-md border px-2 text-xs font-medium transition-colors ${
                 n === safePage
                   ? "border-[#7C9885] bg-[#7C9885] text-white"
                   : "border-border bg-card text-muted-foreground hover:bg-secondary"
@@ -215,7 +214,7 @@ export function MessagesTab({ messages }: Props) {
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             disabled={safePage === totalPages}
-            className="flex items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40"
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40 disabled:cursor-default"
           >
             Next <ChevronRight className="h-3.5 w-3.5" />
           </button>
