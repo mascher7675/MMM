@@ -57,7 +57,6 @@ const ORDER_CUTOFF_HOUR_EST = 17  // 5 PM
 const UNLOCK_HOUR_EST = 12  // noon — skip window reopens after delivery
 
 export function isSkipLocked(deliveryDay: "thursday" | "friday"): boolean {
-  return true // TEMP — force lock for testing, remove before launch
   const targetDay = deliveryDay === "friday" ? FRIDAY : THURSDAY
   const dayBefore = (targetDay - 1 + 7) % 7
   const est = nowInEST()
