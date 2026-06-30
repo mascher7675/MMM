@@ -267,7 +267,8 @@ function DeleteConfirmModal({ customer, onClose, onConfirm }: DeleteConfirmModal
           </button>
           <button
             onClick={onConfirm}
-            className="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors"
+            style={{ background: "#dc2626" }}
+            className="cursor-pointer rounded-lg px-4 py-2 text-sm font-medium text-white hover:opacity-90 transition-opacity"
           >
             Yes, delete
           </button>

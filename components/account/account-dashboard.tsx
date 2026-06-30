@@ -364,7 +364,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                           <p className="font-semibold text-foreground">
                             {formatPrice(order.total)}
                             {order.order_type === "subscription" && (
-                              <span className="text-xs font-normal text-muted-foreground">/mo</span>
+                              <span className="text-xs font-normal text-muted-foreground">/week</span>
                             )}
                           </p>
                           {isExpanded ? (

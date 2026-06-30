@@ -258,7 +258,7 @@ export default function ResetPasswordPage() {
 
         <Button
           type="submit"
-          className="w-full bg-foreground text-background hover:bg-foreground/90"
+          className="w-full bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
           disabled={loading}
         >
           {loading ? "Updating..." : "Update Password"}

@@ -111,6 +111,25 @@ function getNextDeliveryDate(targetDay: typeof THURSDAY | typeof FRIDAY): Date {
   result.setHours(0, 0, 0, 0)
   return result
 }
+
+// Same as getNextDeliveryDate, but walks forward week-by-week past any dates
+// that are already in skippedDates, so the displayed "Next:" date reflects
+// what will actually be delivered next, not just the next calendar weekday.
+function getNextDeliveryDateSkipAware(
+  targetDay: typeof THURSDAY | typeof FRIDAY,
+  skippedDates: string[]
+): Date {
+  let candidate = getNextDeliveryDate(targetDay)
+  let guard = 0
+  while (guard < 52) {
+    const iso = `${candidate.getFullYear()}-${String(candidate.getMonth() + 1).padStart(2, "0")}-${String(candidate.getDate()).padStart(2, "0")}`
+    if (!skippedDates.includes(iso)) return candidate
+    candidate = new Date(candidate)
+    candidate.setDate(candidate.getDate() + 7)
+    guard++
+  }
+  return candidate
+}
  
 function getFinalDeliveryDate(deliveryDay: string, periodEnd: Date): Date | null {
   const targetDayNum = deliveryDay === "friday" ? FRIDAY : THURSDAY
@@ -400,15 +419,21 @@ function SingleSubscriptionCard({
     setIsSelectedDayLocked(isDeliveryDayChangeLocked())
     setIsMilkLocked(isSkipLocked(delivDay))
     setIsDeliverySkipLocked(isSkipLocked(delivDay))
-    setDeliveryOptions(
-      [
-        { day: "thursday" as const, date: getNextDeliveryDate(THURSDAY) },
-        { day: "friday" as const, date: getNextDeliveryDate(FRIDAY) },
-      ].sort((a, b) => a.date.getTime() - b.date.getTime())
-    )
     // Compute upcoming 6 delivery dates on client only
     setUpcomingDates(computeDeliveryDates(delivDay, 6))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+ 
+  // Recompute the "Next:" date shown for each delivery-day option whenever
+  // skipped dates change, so skipping the next delivery immediately updates
+  // the Delivery Day sublabel instead of showing a date that's been skipped.
+  useEffect(() => {
+    setDeliveryOptions(
+      [
+        { day: "thursday" as const, date: getNextDeliveryDateSkipAware(THURSDAY, localSkippedDates) },
+        { day: "friday" as const, date: getNextDeliveryDateSkipAware(FRIDAY, localSkippedDates) },
+      ].sort((a, b) => a.date.getTime() - b.date.getTime())
+    )
+  }, [localSkippedDates]) // eslint-disable-line react-hooks/exhaustive-deps
  
   useEffect(() => {
     setIsSelectedDayLocked(isDeliveryDayChangeLocked())
@@ -917,7 +942,12 @@ function SingleSubscriptionCard({
                       <p className="text-sm font-medium text-foreground capitalize">{day}s</p>
                       {locked && <Lock className="h-3 w-3 text-muted-foreground" />}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-0.5">Next: {formatDateShort(toDateStr(date))}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Next: {formatDateShort(toDateStr(date))}
+                      {getNextDeliveryDate(day === "friday" ? FRIDAY : THURSDAY).getTime() !== date.getTime() && (
+                        <span className="text-muted-foreground/70"> (this week skipped)</span>
+                      )}
+                    </p>
                   </button>
                 )
               })}

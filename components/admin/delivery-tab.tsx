@@ -29,6 +29,21 @@ function fmtPhone(raw: string | null | undefined): string {
   return `(${digits.slice(0, 3)})-${digits.slice(3, 6)}-${digits.slice(6)}`
 }
 
+/** Combine items with the same product name (e.g. two orders each with "Almond Milk - 16oz" x1)
+ *  into a single entry with summed quantity, so the UI shows "x2" instead of two separate tags. */
+function groupItems<T extends { name: string; quantity: number }>(items: T[]): T[] {
+  const map = new Map<string, T>()
+  for (const item of items) {
+    const existing = map.get(item.name)
+    if (existing) {
+      existing.quantity += item.quantity
+    } else {
+      map.set(item.name, { ...item })
+    }
+  }
+  return Array.from(map.values())
+}
+
 export function DeliveryTab() {
   const [day, setDay] = useState<"thursday" | "friday">("thursday")
   const [list, setList] = useState<DeliveryStop[]>([])
@@ -120,7 +135,7 @@ export function DeliveryTab() {
             ${stop.deliveryInstructions ? `<div class="note note-amber">${!stop.isCashCustomer ? '<strong>From Customer:</strong> ' : ''}${stop.deliveryInstructions}</div>` : ''}
             ${stop.adminNotes ? `<div class="note note-blue">${stop.adminNotes}</div>` : ''}
             <div class="items">
-              ${stop.items.map(item => `<span class="item-tag">${item.name} × ${item.quantity}</span>`).join('')}
+              ${groupItems(stop.items).map(item => `<span class="item-tag">${item.name} × ${item.quantity}</span>`).join('')}
             </div>
           </div>
           <div class="bottle-count">${stop.items.reduce((s, item) => s + item.quantity, 0)} bottle${stop.items.reduce((s, item) => s + item.quantity, 0) !== 1 ? 's' : ''}</div>
@@ -355,7 +370,7 @@ export function DeliveryTab() {
                       </p>
                     )}
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {stop.items.map((item, j) => (
+                      {groupItems(stop.items).map((item, j) => (
                         <span key={j} className="rounded-full bg-secondary px-2 py-0.5 text-xs">
                           {item.name} × {item.quantity}
                         </span>
