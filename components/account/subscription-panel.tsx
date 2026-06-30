@@ -778,7 +778,7 @@ function SingleSubscriptionCard({
           {isMilkLocked && (
             <div className="mb-3 flex items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
               <Lock className="h-3 w-3 shrink-0" />
-              Milk type changes are locked until 12 PM on your delivery day.
+              Milk changes are locked until 12 PM on your delivery day.
             </div>
           )}
           {swapError && (
@@ -859,7 +859,10 @@ function SingleSubscriptionCard({
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">Cutoff:</span> Skip or unskip before{" "}
-              <span className="font-medium">5 PM Thursday</span> — no charge for skipped weeks.
+              <span className="font-medium">
+                5 PM {activeSubscription.delivery_day === "friday" ? "Thursday" : "Wednesday"}
+              </span>{" "}
+              — no charge for skipped weeks.
             </div>
  
             {isDeliverySkipLocked && (
@@ -879,13 +882,7 @@ function SingleSubscriptionCard({
                     subscriptionId={activeSubscription.id}
                     deliveryDate={date}
                     isSkipped={localSkippedDates.includes(date)}
-                    locked={isDeliverySkipLocked && idx === 0 && (() => {
-                      if (!todayISO) return false
-                      const today = new Date(todayISO + "T12:00:00Z")
-                      const delivery = new Date(date + "T12:00:00Z")
-                      const diffDays = Math.round((delivery.getTime() - today.getTime()) / 86400000)
-                      return diffDays <= 1
-                    })()}
+                    locked={isDeliverySkipLocked && idx === 0}
                     onToggle={handleSkipToggle}
                   />
                 ))}
