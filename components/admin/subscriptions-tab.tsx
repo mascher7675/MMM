@@ -210,7 +210,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors capitalize ${
+            className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors capitalize cursor-pointer ${
               filter === f
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"
@@ -347,7 +347,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                           router.refresh()
                         })
                       }
-                      className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer${
                         sub.status === "active"
                           ? "border-[#7C9885] bg-[#7C9885] text-white"
                           : "border-border bg-card hover:bg-secondary"
@@ -359,7 +359,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                     {/* Skip deliveries */}
                     <button
                       onClick={() => setSkipModalSubId(sub.id)}
-                      className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-secondary transition-colors"
+                      className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-secondary transition-colors cursor-pointer"
                     >
                       <SkipForward className="h-3.5 w-3.5" />
                       Skip Deliveries
@@ -373,7 +373,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                           router.refresh()
                         })
                       }
-                      className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
                         sub.status === "cancelled"
                           ? "border-[#7C9885] bg-[#7C9885] text-white"
                           : "border-border bg-card hover:bg-secondary"
