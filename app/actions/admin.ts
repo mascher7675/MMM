@@ -80,6 +80,7 @@ export interface AdminOrder {
   created_at: string
   stripe_session_id: string | null
   stripe_payment_intent_id: string | null
+  stripe_invoice_id?: string | null
   stripe_subscription_id: string | null
   stripe_refund_id?: string | null
   refund_amount_cents?: number | null
@@ -969,6 +970,138 @@ export async function cancelAndRefundOrder(
     return { refunded: didRefund, refundId: stripeRefundId, error: null }
   } catch (e) {
     return { refunded: false, refundId: null, error: e instanceof Error ? e.message : "Failed to cancel order" }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Refund a single subscription delivery (e.g. customer wasn't home / out of
+// town for the week). Refunds the charge for THAT week's order only — the
+// underlying subscription is left untouched and keeps running for future
+// weeks. This is deliberately separate from cancelAndRefundOrder above,
+// which is one-time-order-only and cancels the whole order.
+//
+// Relies on orders.stripe_payment_intent_id, which is populated by the
+// invoice.payment_succeeded webhook handler once Stripe actually charges
+// that week's invoice (invoice.upcoming, which creates the order row
+// earlier, fires before the charge happens and has no payment_intent yet —
+// see app/api/stripe/webhook/route.ts).
+// ---------------------------------------------------------------------------
+export async function refundSubscriptionOrder(
+  orderId: string
+): Promise<{ refunded: boolean; refundId: string | null; error: string | null }> {
+  try {
+    const { supabase } = await requireAdmin()
+
+    const { data: order, error: fetchError } = await supabase
+      .from("orders")
+      .select(
+        "id, status, order_type, total, stripe_payment_intent_id, user_id, order_code, delivery_date, order_items(product_name, quantity)"
+      )
+      .eq("id", orderId)
+      .single()
+
+    if (fetchError || !order) {
+      return { refunded: false, refundId: null, error: fetchError?.message ?? "Order not found" }
+    }
+
+    if (order.order_type !== "subscription") {
+      return {
+        refunded: false,
+        refundId: null,
+        error: "This action is for subscription delivery orders only. Use Cancel & Refund for one-time orders.",
+      }
+    }
+
+    if (order.status === "cancelled") {
+      return { refunded: false, refundId: null, error: "This delivery has already been cancelled or refunded." }
+    }
+
+    if (!order.stripe_payment_intent_id) {
+      return {
+        refunded: false,
+        refundId: null,
+        error:
+          "No payment on record for this delivery yet. Stripe charges the card a few hours before delivery — if it hasn't happened yet, there's nothing to refund. If it's already been charged, check Supabase/Stripe directly before retrying.",
+      }
+    }
+
+    let stripeRefundId: string | null = null
+    let refundAmountCents: number | null = null
+
+    try {
+      const refund = await stripe.refunds.create({
+        payment_intent: order.stripe_payment_intent_id,
+        reason: "requested_by_customer",
+      })
+      stripeRefundId = refund.id
+      refundAmountCents = refund.amount
+    } catch (stripeErr: unknown) {
+      const msg = stripeErr instanceof Error ? stripeErr.message : "Stripe refund failed"
+      return { refunded: false, refundId: null, error: msg }
+    }
+
+    const now = new Date().toISOString()
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({
+        status: "cancelled",
+        delivery_state: "cancelled",
+        cancelled_at: now,
+        stripe_refund_id: stripeRefundId,
+        refund_amount_cents: refundAmountCents,
+        updated_at: now,
+      })
+      .eq("id", orderId)
+
+    if (updateError) return { refunded: true, refundId: stripeRefundId, error: updateError.message }
+
+    // Best-effort confirmation email — a failure here shouldn't fail the
+    // refund itself, since the order was already updated successfully.
+    if (order.user_id) {
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("first_name, last_name, email")
+          .eq("id", order.user_id)
+          .single()
+
+        const customerEmail = profile?.email ?? null
+        if (customerEmail) {
+          const customerName =
+            [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || profile?.email || "there"
+          const orderRef = order.order_code ?? order.id.slice(-5).toUpperCase()
+          const deliveryDateLabel = order.delivery_date
+            ? new Date(order.delivery_date + "T12:00:00").toLocaleDateString("en-US", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              })
+            : "unknown date"
+          const itemsSummary =
+            (order.order_items ?? [])
+              .map((i: { product_name: string; quantity: number }) => `${i.product_name} × ${i.quantity}`)
+              .join(", ") || "—"
+
+          await sendOrderCancelledEmail({
+            customerEmail,
+            customerName,
+            orderCode: orderRef,
+            totalCents: order.total,
+            deliveryDateLabel,
+            itemsSummary,
+            refunded: true,
+            refundAmountCents,
+          })
+        }
+      } catch (emailErr) {
+        console.error("[refundSubscriptionOrder] Failed to send confirmation email:", emailErr)
+      }
+    }
+
+    revalidatePath("/admin")
+    return { refunded: true, refundId: stripeRefundId, error: null }
+  } catch (e) {
+    return { refunded: false, refundId: null, error: e instanceof Error ? e.message : "Failed to refund delivery" }
   }
 }
 

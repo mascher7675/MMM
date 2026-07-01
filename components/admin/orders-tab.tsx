@@ -9,6 +9,7 @@ import {
   updateOrderStatus,
   updateOrderAdminNotes,
   cancelAndRefundOrder,
+  refundSubscriptionOrder,
   deleteOrphanedOrder,
 } from "@/app/actions/admin"
 import { fmt, fmtDate, DELIVERY_STATE_LABELS, STATUS_COLORS } from "./admin-types"
@@ -134,6 +135,10 @@ export function OrdersTab({ orders: initialOrders }: Props) {
   const [cancelResult, setCancelResult]   = useState<Record<string, { refunded: boolean; error: string | null }>>({})
   const [deleteModalOrder, setDeleteModalOrder] = useState<AdminOrder | null>(null)
 
+  const [refundConfirm, setRefundConfirm] = useState<Set<string>>(new Set())
+  const [refundLoading, setRefundLoading] = useState<Set<string>>(new Set())
+  const [refundResult, setRefundResult]   = useState<Record<string, { refunded: boolean; error: string | null }>>({})
+
   const [, startTransition] = useTransition()
   const [filter, setFilter]           = useState<string>("all")
   const [page, setPage]               = useState(1)
@@ -192,6 +197,21 @@ export function OrdersTab({ orders: initialOrders }: Props) {
     const result = await cancelAndRefundOrder(orderId)
     const done = new Set(cancelLoading); done.delete(orderId); setCancelLoading(done)
     setCancelResult((prev) => ({ ...prev, [orderId]: { refunded: result.refunded, error: result.error } }))
+  }
+
+  const requestRefundConfirm = (orderId: string) => {
+    const next = new Set(refundConfirm); next.add(orderId); setRefundConfirm(next)
+  }
+  const dismissRefundConfirm = (orderId: string) => {
+    const next = new Set(refundConfirm); next.delete(orderId); setRefundConfirm(next)
+  }
+
+  const handleRefundDelivery = async (orderId: string) => {
+    const loading = new Set(refundLoading); loading.add(orderId); setRefundLoading(loading)
+    const confirm = new Set(refundConfirm); confirm.delete(orderId); setRefundConfirm(confirm)
+    const result = await refundSubscriptionOrder(orderId)
+    const done = new Set(refundLoading); done.delete(orderId); setRefundLoading(done)
+    setRefundResult((prev) => ({ ...prev, [orderId]: { refunded: result.refunded, error: result.error } }))
   }
 
   const handleDeleted = (id: string) => {
@@ -306,6 +326,11 @@ export function OrdersTab({ orders: initialOrders }: Props) {
         const cancelRes          = cancelResult[order.id]
         const hasStripePayment   = !!order.stripe_payment_intent_id
         const showCancelButton   = !isSubscription && !isCancelled && !isOrphaned && !isSkipped
+
+        const isConfirmingRefund = refundConfirm.has(order.id)
+        const isRefunding        = refundLoading.has(order.id)
+        const refundRes          = refundResult[order.id]
+        const showRefundButton   = isSubscription && !isCancelled && !isOrphaned && !isSkipped
 
         // Delivery date to display — prefer delivery_date, fall back to placed_at
         const deliveryDateDisplay = order.delivery_date ?? order.placed_at ?? null
@@ -629,6 +654,76 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                             className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary transition-colors"
                           >
                             Keep Order
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Subscription: Refund This Delivery */}
+                {showRefundButton && (
+                  <div className="border-t border-border pt-4">
+                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Refund This Delivery
+                    </p>
+                    <p className="mb-2 text-xs text-muted-foreground">
+                      Refunds just this week&apos;s charge (e.g. customer wasn&apos;t home to receive it) — the
+                      subscription itself keeps running for future weeks.
+                    </p>
+                    {refundRes && !refundRes.error && (
+                      <div className="mb-2 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300">
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                        This delivery was cancelled and refunded via Stripe.
+                      </div>
+                    )}
+                    {refundRes?.error && (
+                      <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
+                        Error: {refundRes.error}
+                      </div>
+                    )}
+                    {!isConfirmingRefund && !refundRes && hasStripePayment && (
+                      <button
+                        onClick={() => requestRefundConfirm(order.id)}
+                        disabled={isRefunding}
+                        className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-50"
+                      >
+                        <XCircle className="h-3.5 w-3.5" />
+                        Refund This Delivery
+                      </button>
+                    )}
+                    {!isConfirmingRefund && !refundRes && !hasStripePayment && (
+                      <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+                        No payment on record for this delivery yet — Stripe charges the card a few hours before
+                        delivery. Check back once it&apos;s been charged, or refund manually via Stripe if needed
+                        right away.
+                      </div>
+                    )}
+                    {isRefunding && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        Refunding this delivery…
+                      </div>
+                    )}
+                    {isConfirmingRefund && !isRefunding && (
+                      <div className="rounded-lg border border-border bg-card p-3 space-y-2">
+                        <p className="text-xs font-medium text-foreground">
+                          Cancel this delivery and issue a full refund of {fmt(order.total)} to the customer? The
+                          subscription will keep running for future weeks.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleRefundDelivery(order.id)}
+                            style={{ backgroundColor: "#e05c6b", color: "#ffffff" }}
+                            className="rounded-md px-3 py-1.5 text-xs font-medium transition-colors hover:opacity-90"
+                          >
+                            Yes, Refund This Delivery
+                          </button>
+                          <button
+                            onClick={() => dismissRefundConfirm(order.id)}
+                            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary transition-colors"
+                          >
+                            Keep Delivery
                           </button>
                         </div>
                       </div>

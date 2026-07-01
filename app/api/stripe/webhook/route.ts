@@ -53,6 +53,10 @@ export async function POST(request: NextRequest) {
         await handleInvoiceUpcoming(event.data.object as Stripe.Invoice)
         break
 
+      case "invoice.payment_succeeded":
+        await handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice)
+        break
+
       case "customer.subscription.deleted":
         await handleSubscriptionDeleted(event.data.object as Stripe.Subscription)
         break
@@ -99,6 +103,12 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 
 // ---------------------------------------------------------------------------
 // invoice.upcoming handler
+//
+// Fires as a PREVIEW, hours before Stripe actually charges the card. This is
+// when we create the weekly order row (so delivery/route planning can see it
+// coming) — but there is no real charge yet at this point, so no
+// payment_intent exists to attach. That happens later, in
+// handleInvoicePaymentSucceeded below.
 // ---------------------------------------------------------------------------
 async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
   const invoiceAny = invoice as unknown as { subscription?: string | { id: string } }
@@ -194,6 +204,97 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
     console.error(`[webhook] Failed to update skipped_dates for sub ${sub.id}:`, updateError.message)
   } else {
     console.log(`[webhook] Removed ${deliveryDate} from skipped_dates for sub ${sub.id}`)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// invoice.payment_succeeded handler
+//
+// Fires once Stripe has actually charged the card for a subscription invoice.
+// Attaches the real payment_intent to the matching weekly order row (created
+// earlier by invoice.upcoming) so admin refunds have something to refund
+// against. $0 invoices (e.g. a fully-credited skipped week) produce no
+// payment_intent — nothing to attach in that case, which is expected.
+// ---------------------------------------------------------------------------
+async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
+  const invoiceAny = invoice as unknown as {
+    subscription?: string | { id: string } | null
+    payment_intent?: string | { id: string } | null
+  }
+
+  const stripeSubscriptionId =
+    typeof invoiceAny.subscription === "string"
+      ? invoiceAny.subscription
+      : invoiceAny.subscription?.id
+
+  // Not a subscription invoice (e.g. a one-time order, or a bare invoice like
+  // the one `stripe trigger invoice.payment_succeeded` generates by default —
+  // that fixture creates a standalone invoice with no subscription attached
+  // at all) — nothing for us to do here.
+  if (!stripeSubscriptionId) {
+    console.log(`[webhook] invoice.payment_succeeded: invoice ${invoice.id} has no subscription attached — skipping (expected for one-time invoices or the default stripe trigger fixture)`)
+    return
+  }
+
+  const paymentIntentId =
+    typeof invoiceAny.payment_intent === "string"
+      ? invoiceAny.payment_intent
+      : invoiceAny.payment_intent?.id
+
+  if (!paymentIntentId) {
+    console.log(
+      `[webhook] invoice.payment_succeeded: no payment_intent on invoice ${invoice.id} for sub ${stripeSubscriptionId} — likely a $0 invoice (fully credited skip), nothing to attach`
+    )
+    return
+  }
+
+  const supabase = await createClient()
+
+  const { data: rows, error: subError } = await supabase
+    .rpc("get_subscription_for_webhook", {
+      p_stripe_subscription_id: stripeSubscriptionId,
+    })
+
+  const sub = rows?.[0] ?? null
+
+  if (subError || !sub) {
+    console.log(`[webhook] invoice.payment_succeeded: no subscription found for ${stripeSubscriptionId}`)
+    return
+  }
+
+  const periodStartDate = unixToESTDateStr(invoice.period_start)
+  const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day as "thursday" | "friday")
+
+  if (!deliveryDate) {
+    console.log(`[webhook] invoice.payment_succeeded: could not determine delivery date for period starting ${periodStartDate}`)
+    return
+  }
+
+  const { data: attachResult, error: attachError } = await supabase
+    .rpc("attach_payment_to_weekly_order", {
+      p_stripe_subscription_id: stripeSubscriptionId,
+      p_delivery_date: deliveryDate,
+      p_stripe_payment_intent_id: paymentIntentId,
+      p_stripe_invoice_id: invoice.id ?? "",
+    })
+
+  if (attachError) {
+    console.error(
+      `[webhook] Failed to attach payment_intent to order for sub ${sub.id} on ${deliveryDate}:`,
+      attachError.message
+    )
+    return
+  }
+
+  const result = attachResult as { error: string | null; order_id?: string | null }
+  if (result?.order_id) {
+    console.log(
+      `[webhook] Attached payment_intent ${paymentIntentId} to order ${result.order_id} (sub ${sub.id}, ${deliveryDate})`
+    )
+  } else {
+    console.log(
+      `[webhook] invoice.payment_succeeded: no matching order row found for sub ${sub.id} on ${deliveryDate} — order may not have been created yet`
+    )
   }
 }
 

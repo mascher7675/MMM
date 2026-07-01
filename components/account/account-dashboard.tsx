@@ -161,10 +161,10 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
     const config = DELIVERY_STATE_CONFIG[state]
     if (!config) return null
     return (
-      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${config.badgeClass}`}>
+      <Badge variant="outline" className={`gap-1 text-xs ${config.badgeClass}`}>
         <Truck className="h-2.5 w-2.5" />
         {config.label}
-      </span>
+      </Badge>
     )
   }
  
@@ -352,15 +352,15 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                             {!isCancelled && deliveryBadge}
                             {/* Refund issued badge */}
                             {isCancelled && order.refund_amount_cents != null && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
                                 Refunded {formatPrice(order.refund_amount_cents)}
-                              </span>
+                              </Badge>
                             )}
                             {/* Request sent badge */}
                             {wasSent && (
-                              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                              <Badge variant="outline" className="gap-1 text-xs bg-amber-50 text-amber-700 border-amber-200">
                                 <CheckCircle className="h-2.5 w-2.5" /> Refund request sent
-                              </span>
+                              </Badge>
                             )}
                           </div>
                           <p className="mt-1 text-sm text-muted-foreground">

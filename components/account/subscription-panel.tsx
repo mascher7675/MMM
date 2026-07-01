@@ -609,13 +609,20 @@ function SingleSubscriptionCard({
   const remainingDeliveries = todayISO
     ? allDeliveries.filter((d) => {
         const dISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-        return dISO >= todayISO
+        return dISO >= todayISO && !localSkippedDates.includes(dISO)
       })
     : []
  
   const lastDeliveryDisplay: string | null = finalDeliveryDate
     ? formatDateLong(toDateStr(finalDeliveryDate))
     : cancelSessionFinalDate ?? null
+
+  // True when the subscription's final (already-paid-for) delivery date was
+  // itself skipped by the customer — meaning no delivery will actually go
+  // out before the subscription ends, even though a "final delivery" date
+  // is on record.
+  const finalDeliveryWasSkipped =
+    !!finalDeliveryDate && localSkippedDates.includes(toDateStr(finalDeliveryDate))
  
   const skippedCount = localSkippedDates.filter((d) => upcomingDates.includes(d)).length
  
@@ -641,12 +648,12 @@ function SingleSubscriptionCard({
               {remainingDeliveries.length > 0 ? (
                 <div className="space-y-1">
                   <p className="text-xs text-amber-700 dark:text-amber-400">
-                    You have{" "}
+                    You&apos;ve already paid for{" "}
                     <span className="font-semibold">
                       {remainingDeliveries.length}{" "}
                       {remainingDeliveries.length === 1 ? "delivery" : "deliveries"}
-                    </span>{" "}
-                    remaining:
+                    </span>
+                    , so {remainingDeliveries.length === 1 ? "it" : "they"} will still go out as scheduled:
                   </p>
                   <ul className="space-y-0.5">
                     {remainingDeliveries.map((d, i) => (
@@ -663,6 +670,12 @@ function SingleSubscriptionCard({
                     ))}
                   </ul>
                 </div>
+              ) : finalDeliveryWasSkipped ? (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  You skipped your final delivery (
+                  <span className="font-medium">{lastDeliveryDisplay}</span>), so no further deliveries are
+                  scheduled — your subscription will end without one.
+                </p>
               ) : lastDeliveryDisplay ? (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   Your last delivery was on <span className="font-medium">{lastDeliveryDisplay}</span>.
@@ -693,7 +706,7 @@ function SingleSubscriptionCard({
                 disabled={isReactivating}
                 variant="outline"
                 size="sm"
-                className="w-full gap-2 border-amber-300 bg-white text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-transparent dark:text-amber-200"
+                className="w-full gap-2 border-amber-300 bg-white text-amber-900 hover:bg-amber-50 hover:text-amber-900 dark:border-amber-700 dark:bg-transparent dark:text-amber-200 dark:hover:text-amber-200"
               >
                 {isReactivating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                 Keep my subscription
@@ -989,7 +1002,9 @@ function SingleSubscriptionCard({
               <AlertDialogHeader>
                 <AlertDialogTitle>Cancel your subscription?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Your subscription will cancel at the end of the current weekly billing period. You won&apos;t be charged again — and if you want to skip just a week or two, use &ldquo;Skip a Delivery&rdquo; above instead.
+                  You&apos;ve already paid for this week&apos;s delivery, so it will still go out as scheduled
+                  (unless you&apos;ve skipped it) — cancelling just stops future charges and deliveries after
+                  that. If you only want to skip a week or two instead, use &ldquo;Skip a Delivery&rdquo; above.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
