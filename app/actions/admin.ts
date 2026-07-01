@@ -6,6 +6,7 @@ import { stripe } from "@/lib/stripe"
 import { revalidatePath } from "next/cache"
 import { PRODUCTS, normalizeProductName } from "@/lib/products"
 import { computeNextDeliveryDate } from "@/lib/delivery-utils"
+import { sendRefundRequestDeclinedEmail, sendOrderCancelledEmail } from "@/lib/email"
 
 // ---------------------------------------------------------------------------
 // Price helpers
@@ -871,7 +872,7 @@ export async function cancelAndRefundOrder(
 
     const { data: order, error: fetchError } = await supabase
       .from("orders")
-      .select("id, status, order_type, total, stripe_payment_intent_id, is_cash_customer")
+      .select("id, status, order_type, total, stripe_payment_intent_id, user_id, order_code, delivery_date, order_items(product_name, quantity)")
       .eq("id", orderId)
       .single()
 
@@ -921,10 +922,148 @@ export async function cancelAndRefundOrder(
 
     if (updateError) return { refunded: didRefund, refundId: stripeRefundId, error: updateError.message }
 
+    // Best-effort confirmation email — a failure here shouldn't fail the
+    // cancellation itself, since the order was already updated successfully.
+    if (order.user_id) {
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("first_name, last_name, email")
+          .eq("id", order.user_id)
+          .single()
+
+        const customerEmail = profile?.email ?? null
+        if (customerEmail) {
+          const customerName =
+            [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || profile?.email || "there"
+          const orderRef = order.order_code ?? order.id.slice(-5).toUpperCase()
+          const deliveryDateLabel = order.delivery_date
+            ? new Date(order.delivery_date + "T12:00:00").toLocaleDateString("en-US", {
+                weekday: "long",
+                month: "long",
+                day: "numeric",
+              })
+            : "unknown date"
+          const itemsSummary =
+            (order.order_items ?? [])
+              .map((i: { product_name: string; quantity: number }) => `${i.product_name} × ${i.quantity}`)
+              .join(", ") || "—"
+
+          await sendOrderCancelledEmail({
+            customerEmail,
+            customerName,
+            orderCode: orderRef,
+            totalCents: order.total,
+            deliveryDateLabel,
+            itemsSummary,
+            refunded: didRefund,
+            refundAmountCents,
+          })
+        }
+      } catch (emailErr) {
+        console.error("[cancelAndRefundOrder] Failed to send confirmation email:", emailErr)
+      }
+    }
+
     revalidatePath("/admin")
     return { refunded: didRefund, refundId: stripeRefundId, error: null }
   } catch (e) {
     return { refunded: false, refundId: null, error: e instanceof Error ? e.message : "Failed to cancel order" }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Decline a refund request without cancelling/refunding the order.
+// Saves the (optional) reason to orders.admin_notes, emails the customer,
+// and marks the originating message resolved.
+// ---------------------------------------------------------------------------
+export async function declineRefundRequest(
+  orderId: string,
+  messageId: string,
+  reason: string
+): Promise<{ error: string | null }> {
+  try {
+    const { supabase } = await requireAdmin()
+
+    const { data: order, error: orderError } = await supabase
+      .from("orders")
+      .select("id, order_code, total, delivery_date, admin_notes, user_id, order_items(product_name, quantity)")
+      .eq("id", orderId)
+      .single()
+
+    if (orderError || !order) {
+      return { error: orderError?.message ?? "Order not found" }
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("first_name, last_name, email")
+      .eq("id", order.user_id)
+      .single()
+
+    const customerEmail = profile?.email ?? null
+    const customerName =
+      [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") || profile?.email || "there"
+
+    const orderRef = order.order_code ?? order.id.slice(-5).toUpperCase()
+    const deliveryDateLabel = order.delivery_date
+      ? new Date(order.delivery_date + "T12:00:00").toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "long",
+          day: "numeric",
+        })
+      : "unknown date"
+    const itemsSummary =
+      (order.order_items ?? [])
+        .map((i: { product_name: string; quantity: number }) => `${i.product_name} × ${i.quantity}`)
+        .join(", ") || "—"
+
+    const trimmedReason = reason.trim()
+    const now = new Date().toISOString()
+
+    // Save the reason to admin_notes (appended, not overwritten, so it doesn't
+    // clobber any existing delivery/route notes on the order)
+    if (trimmedReason) {
+      const notePrefix = order.admin_notes ? `${order.admin_notes}\n\n` : ""
+      const { error: notesError } = await supabase
+        .from("orders")
+        .update({
+          admin_notes: `${notePrefix}[${now.slice(0, 10)}] Refund request declined: ${trimmedReason}`,
+          updated_at: now,
+        })
+        .eq("id", orderId)
+
+      if (notesError) return { error: notesError.message }
+    }
+
+    // Best-effort email — a failure here shouldn't block the decline itself
+    if (customerEmail) {
+      try {
+        await sendRefundRequestDeclinedEmail({
+          customerEmail,
+          customerName,
+          orderCode: orderRef,
+          totalCents: order.total,
+          deliveryDateLabel,
+          itemsSummary,
+          reason: trimmedReason || undefined,
+        })
+      } catch (emailErr) {
+        console.error("[declineRefundRequest] Failed to send decline email:", emailErr)
+      }
+    }
+
+    const { error: statusError } = await supabase
+      .from("messages")
+      .update({ status: "resolved", updated_at: now })
+      .eq("id", messageId)
+
+    if (statusError) return { error: statusError.message }
+
+    revalidatePath("/admin")
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to decline request" }
   }
 }
 

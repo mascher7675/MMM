@@ -52,6 +52,10 @@ interface Order {
   cancelled_at: string | null
   refund_amount_cents: number | null
   order_items: OrderItem[]
+  // Server-derived: true if there's an unresolved refund_request message
+  // tied to this order. Comes from the DB, not component state, so it
+  // survives a page refresh — prevents duplicate refund requests.
+  has_pending_refund_request?: boolean
 }
  
 interface AccountDashboardProps {
@@ -201,7 +205,8 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
    * - It's a one-time order (not a subscription)
    * - It hasn't been cancelled yet
    * - It hasn't been delivered yet
-   * - The customer hasn't already sent a refund request this session
+   * - There isn't already a pending refund request for it (server-derived,
+   *   not just this session — see has_pending_refund_request)
    */
   /**
    * True = show the "Request cancellation" button.
@@ -212,8 +217,9 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
     order.status !== "cancelled" &&
     order.delivery_state !== "delivered" &&
     order.delivery_state !== "cancelled" &&
-    !refundSent.has(order.id)
- 
+    !refundSent.has(order.id) &&
+    !order.has_pending_refund_request
+
   // True when the order is a one-time that wasn't already cancelled/delivered
   // but the 5pm cutoff has already passed — we show a "window closed" note.
   const isPastCutoff = (order: Order, nowTimestamp: number | null) => {
@@ -225,6 +231,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
       order.delivery_state !== "delivered" &&
       order.delivery_state !== "cancelled" &&
       !refundSent.has(order.id) &&
+      !order.has_pending_refund_request &&
       cutoffMs !== null &&
       nowTimestamp >= cutoffMs
     )
@@ -307,7 +314,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                   const cutoffPassed  = isPastCutoff(order, nowMs)
                   const formOpen      = refundOpen.has(order.id)
                   const isSending     = refundSending.has(order.id)
-                  const wasSent       = refundSent.has(order.id)
+                  const wasSent       = refundSent.has(order.id) || Boolean(order.has_pending_refund_request)
                   const errMsg        = refundError[order.id] ?? ""
  
                   return (
@@ -342,7 +349,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                                 Subscription
                               </Badge>
                             )}
-                            {deliveryBadge}
+                            {!isCancelled && deliveryBadge}
                             {/* Refund issued badge */}
                             {isCancelled && order.refund_amount_cents != null && (
                               <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
@@ -352,7 +359,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                             {/* Request sent badge */}
                             {wasSent && (
                               <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700">
-                                <CheckCircle className="h-2.5 w-2.5" /> Request sent
+                                <CheckCircle className="h-2.5 w-2.5" /> Refund request sent
                               </span>
                             )}
                           </div>

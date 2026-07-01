@@ -208,6 +208,344 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
 }
 
 // ---------------------------------------------------------------------------
+// Refund / Cancellation Request — Confirmation Email (to customer)
+// ---------------------------------------------------------------------------
+
+export interface RefundRequestConfirmationData {
+  customerEmail: string
+  customerName: string
+  orderCode: string
+  totalCents: number
+  deliveryDateLabel: string   // already-formatted, e.g. "Friday, July 3"
+  itemsSummary: string        // e.g. "Oat Milk - 16oz × 1"
+  customerNote?: string
+}
+
+export async function sendRefundRequestConfirmationEmail(data: RefundRequestConfirmationData) {
+  const totalStr = `$${(data.totalCents / 100).toFixed(2)}`
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"></head>
+      <body style="margin:0;padding:0;background:#e8e3db;">
+        <div style="max-width:600px;margin:0 auto;background:#FAF7F2;border-radius:4px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <div style="background:#2C3E2D;padding:44px 48px 36px;text-align:center;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:4px;color:#85B972;text-transform:uppercase;margin-bottom:12px;">North Fork, Long Island</div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:34px;font-weight:normal;color:#FAF7F2;letter-spacing:1px;line-height:1.1;">Modern Milk Maid</div>
+            <div style="margin-top:16px;display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <span style="font-family:Georgia,serif;font-size:18px;color:#85B972;margin:0 12px;">&#10023;</span>
+            <div style="display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#a8bfab;letter-spacing:2px;text-transform:uppercase;margin-top:14px;">Fresh Plant-Based Milks</div>
+          </div>
+
+          <!-- Banner -->
+          <div style="background:#C9A15A;padding:16px 48px;text-align:center;">
+            <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#ffffff;letter-spacing:0.5px;">&#128337; &nbsp;We received your request</span>
+          </div>
+
+          <!-- Body -->
+          <div style="padding:44px 48px;">
+
+            <p style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#2C3E2D;margin:0 0 8px;">Hi ${data.customerName},</p>
+            <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;color:#5a5a4e;line-height:1.7;margin:0 0 36px;">
+              We got your cancellation / refund request for order #${data.orderCode}. We'll review it and process it shortly — you'll get a separate email once your refund has been issued.
+            </p>
+
+            <!-- Order info -->
+            <div style="display:table;width:100%;border-collapse:separate;margin-bottom:36px;">
+              <div style="display:table-row;">
+                <div style="display:table-cell;width:50%;padding:20px 20px 20px 0;vertical-align:top;border-top:2px solid #2C3E2D;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Order</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.6;">
+                    #${data.orderCode}<br>
+                    ${data.itemsSummary}
+                  </div>
+                </div>
+                <div style="display:table-cell;width:50%;padding:20px 0 20px 24px;vertical-align:top;border-top:2px solid #2C3E2D;border-left:1px solid #EDE8DF;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Delivery Date</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.4;">${data.deliveryDateLabel}</div>
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin:14px 0 4px;">Amount</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;">${totalStr}</div>
+                </div>
+              </div>
+            </div>
+
+            ${data.customerNote ? `
+            <div style="margin-bottom:36px;padding:20px 24px;background:#F0EBE2;border-radius:4px;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Your Note</div>
+              <p style="font-family:Georgia,serif;font-size:14px;color:#2C3E2D;line-height:1.6;margin:0;white-space:pre-line;">${data.customerNote}</p>
+            </div>
+            ` : ""}
+
+            <!-- Sign-off -->
+            <div style="margin-top:8px;padding-top:32px;border-top:1px solid #EDE8DF;">
+              <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#5a5a4e;line-height:1.7;margin:0;">Any questions? Just reply here — we're always happy to help.</p>
+            </div>
+
+          </div>
+
+          <!-- Footer -->
+          <div style="background:#2C3E2D;padding:28px 48px;text-align:center;">
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#85B972;">Modern Milk Maid &nbsp;·&nbsp; North Fork, Long Island, NY</div>
+          </div>
+
+        </div>
+      </body>
+    </html>
+  `
+
+  try {
+    const { data: emailData, error } = await resend.emails.send({
+      from: 'Modern Milk Maid <onboarding@resend.dev>',
+      to: [data.customerEmail],
+      subject: `We received your request — Order #${data.orderCode}`,
+      html,
+    })
+
+    if (error) {
+      console.error('Error sending refund request confirmation email:', error)
+      return { success: false, error }
+    }
+
+    return { success: true, data: emailData }
+  } catch (error) {
+    console.error('Error sending refund request confirmation email:', error)
+    return { success: false, error }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Refund / Cancellation Request — Declined Email (to customer)
+// ---------------------------------------------------------------------------
+
+export interface RefundRequestDeclinedData {
+  customerEmail: string
+  customerName: string
+  orderCode: string
+  totalCents: number
+  deliveryDateLabel: string   // already-formatted, e.g. "Friday, July 3"
+  itemsSummary: string        // e.g. "Oat Milk - 16oz × 1"
+  reason?: string
+}
+
+export async function sendRefundRequestDeclinedEmail(data: RefundRequestDeclinedData) {
+  const totalStr = `$${(data.totalCents / 100).toFixed(2)}`
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"></head>
+      <body style="margin:0;padding:0;background:#e8e3db;">
+        <div style="max-width:600px;margin:0 auto;background:#FAF7F2;border-radius:4px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <div style="background:#2C3E2D;padding:44px 48px 36px;text-align:center;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:4px;color:#85B972;text-transform:uppercase;margin-bottom:12px;">North Fork, Long Island</div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:34px;font-weight:normal;color:#FAF7F2;letter-spacing:1px;line-height:1.1;">Modern Milk Maid</div>
+            <div style="margin-top:16px;display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <span style="font-family:Georgia,serif;font-size:18px;color:#85B972;margin:0 12px;">&#10023;</span>
+            <div style="display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#a8bfab;letter-spacing:2px;text-transform:uppercase;margin-top:14px;">Fresh Plant-Based Milks</div>
+          </div>
+
+          <!-- Banner -->
+          <div style="background:#6b6b63;padding:16px 48px;text-align:center;">
+            <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#ffffff;letter-spacing:0.5px;">An update on your request</span>
+          </div>
+
+          <!-- Body -->
+          <div style="padding:44px 48px;">
+
+            <p style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#2C3E2D;margin:0 0 8px;">Hi ${data.customerName},</p>
+            <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;color:#5a5a4e;line-height:1.7;margin:0 0 36px;">
+              We looked into your cancellation / refund request for order #${data.orderCode}, and unfortunately we're not able to process it. Your original order stands as-is — no changes have been made, and no refund has been issued.
+            </p>
+
+            <!-- Order info -->
+            <div style="display:table;width:100%;border-collapse:separate;margin-bottom:36px;">
+              <div style="display:table-row;">
+                <div style="display:table-cell;width:50%;padding:20px 20px 20px 0;vertical-align:top;border-top:2px solid #2C3E2D;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Order</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.6;">
+                    #${data.orderCode}<br>
+                    ${data.itemsSummary}
+                  </div>
+                </div>
+                <div style="display:table-cell;width:50%;padding:20px 0 20px 24px;vertical-align:top;border-top:2px solid #2C3E2D;border-left:1px solid #EDE8DF;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Delivery Date</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.4;">${data.deliveryDateLabel}</div>
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin:14px 0 4px;">Amount</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;">${totalStr}</div>
+                </div>
+              </div>
+            </div>
+
+            ${data.reason ? `
+            <div style="margin-bottom:36px;padding:20px 24px;background:#F0EBE2;border-radius:4px;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Reason</div>
+              <p style="font-family:Georgia,serif;font-size:14px;color:#2C3E2D;line-height:1.6;margin:0;white-space:pre-line;">${data.reason}</p>
+            </div>
+            ` : ""}
+
+            <!-- Sign-off -->
+            <div style="margin-top:8px;padding-top:32px;border-top:1px solid #EDE8DF;">
+              <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#5a5a4e;line-height:1.7;margin:0;">If you think this was a mistake or have questions, just reply here — we're happy to talk it through.</p>
+            </div>
+
+          </div>
+
+          <!-- Footer -->
+          <div style="background:#2C3E2D;padding:28px 48px;text-align:center;">
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#85B972;">Modern Milk Maid &nbsp;·&nbsp; North Fork, Long Island, NY</div>
+          </div>
+
+        </div>
+      </body>
+    </html>
+  `
+
+  try {
+    const { data: emailData, error } = await resend.emails.send({
+      from: 'Modern Milk Maid <onboarding@resend.dev>',
+      to: [data.customerEmail],
+      subject: `An update on your request — Order #${data.orderCode}`,
+      html,
+    })
+
+    if (error) {
+      console.error('Error sending refund request declined email:', error)
+      return { success: false, error }
+    }
+
+    return { success: true, data: emailData }
+  } catch (error) {
+    console.error('Error sending refund request declined email:', error)
+    return { success: false, error }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Order Cancelled / Refund Issued — Confirmation Email (to customer)
+// Sent whenever an admin cancels a one-time order via cancelAndRefundOrder,
+// whether or not it started from a formal refund request.
+// ---------------------------------------------------------------------------
+
+export interface OrderCancelledEmailData {
+  customerEmail: string
+  customerName: string
+  orderCode: string
+  totalCents: number
+  deliveryDateLabel: string
+  itemsSummary: string
+  refunded: boolean
+  refundAmountCents?: number | null
+}
+
+export async function sendOrderCancelledEmail(data: OrderCancelledEmailData) {
+  const totalStr = `$${(data.totalCents / 100).toFixed(2)}`
+  const refundStr =
+    data.refunded && data.refundAmountCents != null
+      ? `$${(data.refundAmountCents / 100).toFixed(2)}`
+      : totalStr
+
+  const bannerText = data.refunded
+    ? "&#10003; &nbsp;Your refund has been issued"
+    : "&#10003; &nbsp;Your order has been cancelled"
+
+  const bodyIntro = data.refunded
+    ? `Good news — your refund for order #${data.orderCode} has been processed. ${refundStr} is on its way back to your original payment method. It can take a few business days to show up on your statement, depending on your bank.`
+    : `Order #${data.orderCode} has been cancelled as requested. No charge was made to your payment method for this order.`
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"></head>
+      <body style="margin:0;padding:0;background:#e8e3db;">
+        <div style="max-width:600px;margin:0 auto;background:#FAF7F2;border-radius:4px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <div style="background:#2C3E2D;padding:44px 48px 36px;text-align:center;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:4px;color:#85B972;text-transform:uppercase;margin-bottom:12px;">North Fork, Long Island</div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:34px;font-weight:normal;color:#FAF7F2;letter-spacing:1px;line-height:1.1;">Modern Milk Maid</div>
+            <div style="margin-top:16px;display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <span style="font-family:Georgia,serif;font-size:18px;color:#85B972;margin:0 12px;">&#10023;</span>
+            <div style="display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#a8bfab;letter-spacing:2px;text-transform:uppercase;margin-top:14px;">Fresh Plant-Based Milks</div>
+          </div>
+
+          <!-- Banner -->
+          <div style="background:#5A81A5;padding:16px 48px;text-align:center;">
+            <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#ffffff;letter-spacing:0.5px;">${bannerText}</span>
+          </div>
+
+          <!-- Body -->
+          <div style="padding:44px 48px;">
+
+            <p style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#2C3E2D;margin:0 0 8px;">Hi ${data.customerName},</p>
+            <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;color:#5a5a4e;line-height:1.7;margin:0 0 36px;">${bodyIntro}</p>
+
+            <!-- Order info -->
+            <div style="display:table;width:100%;border-collapse:separate;margin-bottom:8px;">
+              <div style="display:table-row;">
+                <div style="display:table-cell;width:50%;padding:20px 20px 20px 0;vertical-align:top;border-top:2px solid #2C3E2D;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Order</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.6;">
+                    #${data.orderCode}<br>
+                    ${data.itemsSummary}
+                  </div>
+                </div>
+                <div style="display:table-cell;width:50%;padding:20px 0 20px 24px;vertical-align:top;border-top:2px solid #2C3E2D;border-left:1px solid #EDE8DF;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Original Delivery Date</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.4;">${data.deliveryDateLabel}</div>
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin:14px 0 4px;">${data.refunded ? "Refunded" : "Total"}</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;">${refundStr}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sign-off -->
+            <div style="margin-top:36px;padding-top:32px;border-top:1px solid #EDE8DF;">
+              <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#5a5a4e;line-height:1.7;margin:0;">Any questions? Just reply here — we're always happy to help.</p>
+            </div>
+
+          </div>
+
+          <!-- Footer -->
+          <div style="background:#2C3E2D;padding:28px 48px;text-align:center;">
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#85B972;">Modern Milk Maid &nbsp;·&nbsp; North Fork, Long Island, NY</div>
+          </div>
+
+        </div>
+      </body>
+    </html>
+  `
+
+  try {
+    const { data: emailData, error } = await resend.emails.send({
+      from: 'Modern Milk Maid <onboarding@resend.dev>',
+      to: [data.customerEmail],
+      subject: data.refunded
+        ? `Your refund has been issued — Order #${data.orderCode}`
+        : `Order cancelled — Order #${data.orderCode}`,
+      html,
+    })
+
+    if (error) {
+      console.error('Error sending order cancelled/refunded email:', error)
+      return { success: false, error }
+    }
+
+    return { success: true, data: emailData }
+  } catch (error) {
+    console.error('Error sending order cancelled/refunded email:', error)
+    return { success: false, error }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Contact Notification Email (unchanged)
 // ---------------------------------------------------------------------------
 

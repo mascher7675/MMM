@@ -53,6 +53,10 @@ export async function POST(request: NextRequest) {
         await handleInvoiceUpcoming(event.data.object as Stripe.Invoice)
         break
 
+      case "customer.subscription.deleted":
+        await handleSubscriptionDeleted(event.data.object as Stripe.Subscription)
+        break
+
       default:
         break
     }
@@ -63,6 +67,34 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ received: true })
+}
+
+// ---------------------------------------------------------------------------
+// customer.subscription.deleted handler
+// ---------------------------------------------------------------------------
+async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
+  const stripeSubscriptionId = subscription.id
+
+  if (!stripeSubscriptionId) return
+
+  const supabase = await createClient()
+
+  const { data: wasFound, error } = await supabase.rpc("mark_subscription_cancelled_by_stripe_id", {
+    p_stripe_subscription_id: stripeSubscriptionId,
+  })
+
+  if (error) {
+    console.error(
+      `[webhook] Failed to mark subscription cancelled for stripe sub ${stripeSubscriptionId}:`,
+      error.message
+    )
+  } else if (wasFound) {
+    console.log(`[webhook] Marked subscription cancelled for stripe sub ${stripeSubscriptionId}`)
+  } else {
+    console.log(
+      `[webhook] customer.subscription.deleted received for stripe sub ${stripeSubscriptionId}, but no matching row exists in subscriptions — nothing updated`
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------

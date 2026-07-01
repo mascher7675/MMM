@@ -778,7 +778,7 @@ function SingleSubscriptionCard({
           {isMilkLocked && (
             <div className="mb-3 flex items-center gap-1.5 rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
               <Lock className="h-3 w-3 shrink-0" />
-              Milk changes are locked until 12 PM on your delivery day.
+              Milk type changes are locked until 12 PM on your delivery day.
             </div>
           )}
           {swapError && (
@@ -859,10 +859,7 @@ function SingleSubscriptionCard({
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">Cutoff:</span> Skip or unskip before{" "}
-              <span className="font-medium">
-                5 PM {activeSubscription.delivery_day === "friday" ? "Thursday" : "Wednesday"}
-              </span>{" "}
-              — no charge for skipped weeks.
+              <span className="font-medium">5 PM Thursday</span> — no charge for skipped weeks.
             </div>
  
             {isDeliverySkipLocked && (
@@ -882,7 +879,13 @@ function SingleSubscriptionCard({
                     subscriptionId={activeSubscription.id}
                     deliveryDate={date}
                     isSkipped={localSkippedDates.includes(date)}
-                    locked={isDeliverySkipLocked && idx === 0}
+                    locked={isDeliverySkipLocked && idx === 0 && (() => {
+                      if (!todayISO) return false
+                      const today = new Date(todayISO + "T12:00:00Z")
+                      const delivery = new Date(date + "T12:00:00Z")
+                      const diffDays = Math.round((delivery.getTime() - today.getTime()) / 86400000)
+                      return diffDays <= 1
+                    })()}
                     onToggle={handleSkipToggle}
                   />
                 ))}
@@ -1012,8 +1015,16 @@ function SingleSubscriptionCard({
 // Main exported component — renders one card per subscription
 // ---------------------------------------------------------------------------
 export function SubscriptionPanel({ userId, subscriptions }: SubscriptionPanelProps) {
+  // Only show subscriptions that are still "live" in some sense — active
+  // (including pending-cancellation, which is still status "active" until
+  // the webhook finalizes it) or paused. Once a subscription's status flips
+  // to "cancelled", it's dropped from view. cancel_at_period_end is NOT used
+  // here on its own — it's set once and never reset, so it would otherwise
+  // keep a fully-cancelled subscription visible forever. Cancelled
+  // subscriptions remain fully visible in order history / admin, just not
+  // on this live account panel.
   const visibleSubscriptions = subscriptions.filter(
-    (s) => s.status === "active" || s.status === "paused" || s.cancel_at_period_end
+    (s) => s.status === "active" || s.status === "paused"
   )
  
   if (visibleSubscriptions.length === 0) {

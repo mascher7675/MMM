@@ -4,6 +4,7 @@
 
 import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
+import { sendRefundRequestConfirmationEmail } from "@/lib/email"
 
 export async function sendMessage({
   type,
@@ -148,6 +149,24 @@ export async function requestOrderRefund(
     })
 
     if (insertError) return { error: insertError.message }
+
+    // Best-effort confirmation email — a failure here shouldn't fail the
+    // request itself, since the message was already logged successfully.
+    if (customerEmail) {
+      try {
+        await sendRefundRequestConfirmationEmail({
+          customerEmail,
+          customerName,
+          orderCode: orderRef,
+          totalCents: order.total,
+          deliveryDateLabel: deliveryDateStr,
+          itemsSummary,
+          customerNote: customerNote.trim() || undefined,
+        })
+      } catch (emailErr) {
+        console.error("[requestOrderRefund] Failed to send confirmation email:", emailErr)
+      }
+    }
 
     revalidatePath("/account")
     return { error: null }
