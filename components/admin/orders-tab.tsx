@@ -357,21 +357,6 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                   <span>{paymentLabel}</span>
                   <span>·</span>
                   <span>{fmtDate(order.created_at)}</span>
-                  {isSubscription && order.delivery_day && (
-                    <>
-                      <span>·</span>
-                      <span className="capitalize">{order.delivery_day}s</span>
-                    </>
-                  )}
-                  {deliveryDateDisplay && (
-                    <>
-                      <span>·</span>
-                      <span className="text-foreground/70">
-                        {new Date(deliveryDateDisplay.length === 10 ? deliveryDateDisplay + "T12:00:00" : deliveryDateDisplay)
-                          .toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                      </span>
-                    </>
-                  )}
                   {displayNotes && (
                     <>
                       <span>·</span>
