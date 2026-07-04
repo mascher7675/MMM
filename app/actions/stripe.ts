@@ -16,16 +16,62 @@ interface CartItem {
 }
 
 // ---------------------------------------------------------------------------
-// Compute the next Friday as a Unix timestamp (seconds).
+// Billing model — FINAL (locked Session 11, payment-resolution fix Session 12):
+// "pay for week 1 today, renew at your cutoff" — the same customer
+// experience as Factor/HelloFresh.
+//
+// 1. Checkout is a completely normal subscription checkout: the customer is
+//    charged the FULL weekly price today (real price on the checkout page,
+//    no $0). This payment covers their first delivery.
+// 2. Immediately after checkout succeeds, we make ONE server-side update to
+//    the subscription: `trial_end` = the cutoff before their SECOND delivery,
+//    with `proration_behavior: "none"`. This is Stripe's own documented
+//    method for rescheduling a subscription's billing date
+//    (docs.stripe.com/billing/subscriptions/billing-cycle — "Change the
+//    billing period using a trial period").
+// 3. From then on, Stripe automatically charges the full weekly amount at
+//    the customer's cutoff (Wednesday 5 PM EST for Thursday customers,
+//    Thursday 5 PM EST for Friday customers), each charge paying for the
+//    delivery that goes out the next day. The webhook handlers in
+//    app/api/stripe/webhook/route.ts take it from there.
+//
+// ⚠️ ORDERING MATTERS (Session 12 bug fix): the trial_end update generates a
+// $0 `subscription_update` invoice, which becomes the subscription's
+// latest_invoice. The first-week payment must therefore be resolved from
+// the SIGNUP invoice specifically — via session.invoice — and BEFORE the
+// reschedule, never from latest_invoice afterward (that's how we ended up
+// with a null payment intent on the first live test).
+//
+// Net guarantee: money always precedes milk. Skip/cancel before your
+// cutoff = no charge, no delivery. After the cutoff = charged, and the
+// paid delivery still goes out.
 // ---------------------------------------------------------------------------
-function computeFridayBillingAnchorUnix(): number {
-  const dateStr = computeNextDeliveryDate("friday")
-  const [y, m, d] = dateStr.split("-").map(Number)
-  return Math.floor(new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getTime() / 1000)
+
+// 5 PM EST expressed in UTC. The codebase standardizes on fixed EST (UTC-5)
+// for all cutoff logic (see delivery-utils.ts), so we do the same here.
+const CUTOFF_HOUR_UTC = 22
+
+/**
+ * The cutoff gating the customer's SECOND delivery — where the first renewal
+ * charge should land. First delivery is always the day after its own cutoff,
+ * so the second delivery's cutoff is first delivery + 6 days, at 5 PM EST.
+ * This lands 7–14 days out depending on signup timing, which is fine for
+ * trial_end (unlike billing_cycle_anchor, it has no 7-day cap).
+ */
+function computeSecondCutoffUnix(deliveryDay: "thursday" | "friday"): number {
+  const firstDelivery = computeNextDeliveryDate(deliveryDay)
+  const [y, m, d] = firstDelivery.split("-").map(Number)
+  const ms = Date.UTC(y, m - 1, d + 6, CUTOFF_HOUR_UTC, 0, 0) // Date.UTC normalizes month/year overflow
+  return Math.floor(ms / 1000)
 }
 
 // ---------------------------------------------------------------------------
 // Create Checkout Session
+//
+// For subscription carts: a plain, standard subscription checkout. The
+// customer pays the full weekly price today — no anchor, no proration
+// settings, no special line items. The renewal date gets moved to the
+// correct cutoff right after checkout (see rescheduleRenewalToCutoff).
 // ---------------------------------------------------------------------------
 export async function createCheckoutSession(
   cartItems: CartItem[],
@@ -47,6 +93,8 @@ export async function createCheckoutSession(
       }
     }
 
+    const day: "thursday" | "friday" = deliveryDay === "thursday" ? "thursday" : "friday"
+
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = cartItems.map((item) => {
       const product = PRODUCTS.find((p) => p.id === item.productId)
       if (!product) throw new Error(`Product not found: ${item.productId}`)
@@ -57,7 +105,7 @@ export async function createCheckoutSession(
           product_data: {
             name: product.name,
             description: item.isSubscription
-              ? "Weekly subscription — delivered every week, skip anytime before 5 PM Thursday"
+              ? `Weekly subscription — today's payment covers your first delivery. After that, your card is charged each week at your cutoff (5 PM the evening before your ${day === "thursday" ? "Thursday" : "Friday"} delivery). Skip or cancel anytime before then.`
               : product.description,
           },
           unit_amount: item.isSubscription
@@ -96,9 +144,11 @@ export async function createCheckoutSession(
     }
 
     if (hasSubscription) {
+      // Deliberately NO billing_cycle_anchor and NO proration_behavior here.
+      // The customer pays the normal full price today; the renewal date is
+      // moved to the correct cutoff immediately after checkout via
+      // rescheduleRenewalToCutoff (Stripe's documented trial_end method).
       sessionParams.subscription_data = {
-        billing_cycle_anchor: computeFridayBillingAnchorUnix(),
-        proration_behavior: "none",
         metadata: {
           delivery_day: deliveryDay ?? "",
         },
@@ -149,6 +199,130 @@ export async function getCheckoutSession(sessionId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Move the subscription's next renewal to the cutoff before the customer's
+// SECOND delivery. Stripe's documented method: update trial_end (which also
+// resets the billing cycle anchor to that date) with proration disabled —
+// no credit is owed because week 1 was already fully paid at checkout.
+//
+// NOTE: this update makes Stripe generate a $0 "subscription_update"
+// invoice, which becomes the subscription's latest_invoice — which is why
+// the first-week payment must be resolved BEFORE calling this (see
+// resolveFirstPayment and the ordering in saveOrderFromSession).
+//
+// Returns the subscription's new current_period_end (= the trial end = the
+// second cutoff) for storage in Supabase.
+// ---------------------------------------------------------------------------
+async function rescheduleRenewalToCutoff(
+  stripeSubscriptionId: string,
+  deliveryDay: "thursday" | "friday"
+): Promise<{ periodEnd: string | null; error: string | null }> {
+  try {
+    const trialEnd = computeSecondCutoffUnix(deliveryDay)
+
+    const updated = await stripe.subscriptions.update(stripeSubscriptionId, {
+      trial_end: trialEnd,
+      proration_behavior: "none",
+    })
+
+    const periodEndUnix = (updated as unknown as { items: { data: { current_period_end: number }[] } })
+      .items?.data?.[0]?.current_period_end
+
+    // Prefer the authoritative value from Stripe's response; fall back to
+    // the trial end we just set (they should be the same moment).
+    const effectiveEnd = periodEndUnix ?? trialEnd
+    return { periodEnd: new Date(effectiveEnd * 1000).toISOString(), error: null }
+  } catch (e) {
+    console.error(
+      `CRITICAL: failed to reschedule renewal to cutoff for ${stripeSubscriptionId} — ` +
+        `subscription will renew on its natural weekly date (signup weekday) instead of the cutoff. ` +
+        `Fix manually in Stripe Dashboard (add a trial ending at the correct cutoff, no proration).`,
+      e
+    )
+    return {
+      periodEnd: null,
+      error: e instanceof Error ? e.message : "Failed to reschedule renewal",
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Resolve the payment intent + invoice id for the customer's first-week
+// charge — the payment they just made at checkout.
+//
+// The Checkout Session itself points at the signup invoice (session.invoice),
+// which is the reliable source: the subscription's latest_invoice becomes
+// the $0 trial-reschedule invoice as soon as rescheduleRenewalToCutoff runs,
+// so it must never be used for this after that point. latest_invoice is kept
+// only as a fallback for the case where session.invoice is missing AND the
+// reschedule hasn't happened yet (i.e. this is called before it, which is
+// the required ordering anyway).
+//
+// Under newer Stripe API versions (2025-03-31 "basil" and later, including
+// our 2026 "clover" version), invoices don't expose a top-level
+// `payment_intent` field — payments live in the invoice's `payments` list.
+// Modern shape tried first, legacy field as fallback.
+// ---------------------------------------------------------------------------
+function extractPaymentIntentFromInvoice(invoice: Stripe.Invoice | null): {
+  paymentIntentId: string | null
+  invoiceId: string | null
+} {
+  if (!invoice) return { paymentIntentId: null, invoiceId: null }
+
+  const invAny = invoice as unknown as {
+    id?: string
+    payment_intent?: string | { id: string } | null
+    payments?: {
+      data?: Array<{
+        payment?: {
+          type?: string
+          payment_intent?: string | { id: string } | null
+        }
+      }>
+    }
+  }
+
+  const fromPayments = invAny.payments?.data
+    ?.map((p) => p.payment?.payment_intent)
+    .find((pi) => !!pi)
+
+  const raw = fromPayments ?? invAny.payment_intent ?? null
+  const paymentIntentId = typeof raw === "string" ? raw : raw?.id ?? null
+
+  return { paymentIntentId, invoiceId: invAny.id ?? null }
+}
+
+async function resolveFirstPayment(
+  session: Stripe.Checkout.Session,
+  stripeSubscriptionId: string
+): Promise<{ paymentIntentId: string | null; invoiceId: string | null }> {
+  try {
+    // Preferred: the signup invoice the Checkout Session itself points at.
+    const sessionInvoice = (session as unknown as { invoice?: string | { id: string } | null }).invoice
+    const sessionInvoiceId =
+      typeof sessionInvoice === "string" ? sessionInvoice : sessionInvoice?.id ?? null
+
+    if (sessionInvoiceId) {
+      const invoice = await stripe.invoices.retrieve(sessionInvoiceId, {
+        expand: ["payments"],
+      })
+      const result = extractPaymentIntentFromInvoice(invoice)
+      if (result.paymentIntentId) return result
+    }
+
+    // Fallback: subscription's latest invoice. Only reliable BEFORE the
+    // trial reschedule runs — which is the required call ordering anyway.
+    const sub = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+      expand: ["latest_invoice.payments"],
+    })
+    const latestInvoice = (sub as unknown as { latest_invoice: Stripe.Invoice | null }).latest_invoice
+    return extractPaymentIntentFromInvoice(latestInvoice)
+  } catch (e) {
+    console.error("Failed to resolve first payment for subscription:", e)
+    return { paymentIntentId: null, invoiceId: null }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Fetch receipt URL from Stripe
 // ---------------------------------------------------------------------------
 async function fetchReceiptUrl(session: Stripe.Checkout.Session): Promise<string | null> {
@@ -167,19 +341,17 @@ async function fetchReceiptUrl(session: Stripe.Checkout.Session): Promise<string
       return charge?.receipt_url ?? null
     }
 
-    if (session.mode === "subscription" && session.subscription) {
-      const subscriptionId =
-        typeof session.subscription === "string"
-          ? session.subscription
-          : (session.subscription as Stripe.Subscription).id
+    if (session.mode === "subscription") {
+      // Use the signup invoice the session points at (NOT latest_invoice,
+      // which becomes the $0 trial-reschedule invoice — see resolveFirstPayment).
+      const sessionInvoice = (session as unknown as { invoice?: string | { id: string } | null }).invoice
+      const sessionInvoiceId =
+        typeof sessionInvoice === "string" ? sessionInvoice : sessionInvoice?.id ?? null
 
-      const subscription = await stripe.subscriptions.retrieve(subscriptionId, {
-        expand: ["latest_invoice"],
-      })
-
-      const invoice = (subscription as unknown as { latest_invoice: Stripe.Invoice | null })
-        .latest_invoice
-      return invoice?.hosted_invoice_url ?? null
+      if (sessionInvoiceId) {
+        const invoice = await stripe.invoices.retrieve(sessionInvoiceId)
+        return invoice.hosted_invoice_url ?? null
+      }
     }
   } catch (e) {
     console.error("Failed to fetch receipt URL from Stripe:", e)
@@ -243,11 +415,6 @@ export async function saveOrderFromSession(sessionId: string) {
       ? new Date(deliveryDate + "T12:00:00").toISOString()
       : purchasedAt
 
-    const stripePaymentIntentId =
-      typeof session.payment_intent === "string"
-        ? session.payment_intent
-        : (session.payment_intent as Stripe.PaymentIntent | null)?.id ?? null
-
     const stripeCustomerId =
       typeof session.customer === "string"
         ? session.customer
@@ -255,9 +422,9 @@ export async function saveOrderFromSession(sessionId: string) {
 
     const receiptUrl = await fetchReceiptUrl(session)
 
-    // For subscriptions with a future billing anchor, Stripe returns amount_total = 0
-    // on the checkout session because no charge is collected at signup time.
-    // Calculate the real weekly total from cart items instead.
+    // The customer pays the full weekly price at checkout, so
+    // session.amount_total is the real charged amount. Cart-derived total
+    // kept as a fallback only.
     const cartTotal = cartItems.reduce((sum, ci) => {
       const product = PRODUCTS.find((p) => p.id === ci.productId)
       const price = ci.isSubscription
@@ -265,13 +432,46 @@ export async function saveOrderFromSession(sessionId: string) {
         : (product?.priceInCents ?? 0)
       return sum + price * ci.quantity
     }, 0)
-    const amountTotal = isSubscriptionMode ? cartTotal : (session.amount_total ?? cartTotal)
+    const amountTotal = session.amount_total ?? cartTotal
 
     const stripeSubIdForOrder = isSubscriptionMode
       ? (typeof session.subscription === "string"
           ? session.subscription
           : (session.subscription as Stripe.Subscription | null)?.id ?? null)
       : null
+
+    // Payment intent: one-time checkouts carry it on the session; for
+    // subscription checkouts the charge lives on the signup invoice.
+    let stripePaymentIntentId: string | null =
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : (session.payment_intent as Stripe.PaymentIntent | null)?.id ?? null
+
+    let stripeInvoiceId: string | null = null
+    let periodEnd: string | null = null
+
+    if (isSubscriptionMode && stripeSubIdForOrder) {
+      // ⚠️ ORDER MATTERS (Session 12 fix):
+      // 1. Resolve the first-week payment FIRST, from the signup invoice —
+      //    the reschedule below generates a $0 invoice that becomes
+      //    latest_invoice and would otherwise shadow the real payment.
+      const firstPayment = await resolveFirstPayment(session, stripeSubIdForOrder)
+      if (firstPayment.paymentIntentId) stripePaymentIntentId = firstPayment.paymentIntentId
+      stripeInvoiceId = firstPayment.invoiceId
+
+      if (!firstPayment.paymentIntentId) {
+        console.error(
+          `saveOrderFromSession: could not resolve first-week payment intent for ${stripeSubIdForOrder} — ` +
+            `admin refunds for this order won't work until it's backfilled. Check the signup invoice in Stripe.`
+        )
+      }
+
+      // 2. THEN move the renewal to the correct cutoff (Stripe-documented
+      //    trial_end method — see rescheduleRenewalToCutoff). Failure here
+      //    is logged CRITICALLY but doesn't block the order.
+      const reschedule = await rescheduleRenewalToCutoff(stripeSubIdForOrder, deliveryDay)
+      periodEnd = reschedule.periodEnd
+    }
 
     const { data: profile } = await supabase
       .from("profiles")
@@ -301,6 +501,7 @@ export async function saveOrderFromSession(sessionId: string) {
         delivery_zip: profile?.zip || null,
         stripe_session_id: sessionId,
         stripe_payment_intent_id: stripePaymentIntentId,
+        stripe_invoice_id: stripeInvoiceId,
         stripe_subscription_id: stripeSubIdForOrder,
         stripe_receipt_url: receiptUrl,
         delivery_date: deliveryDate,
@@ -342,30 +543,11 @@ export async function saveOrderFromSession(sessionId: string) {
 
     // ── 3. Save subscription record (subscription mode only) ────────────────
     if (isSubscriptionMode) {
-      const stripeSubId =
-        typeof session.subscription === "string"
-          ? session.subscription
-          : (session.subscription as Stripe.Subscription | null)?.id
-
-      let periodEnd: string | null = null
-      if (stripeSubId) {
-        try {
-          const stripeSub = await stripe.subscriptions.retrieve(stripeSubId)
-          const periodEndUnix = (stripeSub as unknown as { items: { data: { current_period_end: number }[] } })
-            .items?.data?.[0]?.current_period_end
-          if (periodEndUnix) {
-            periodEnd = new Date(periodEndUnix * 1000).toISOString()
-          }
-        } catch (e) {
-          console.error("Failed to retrieve Stripe subscription:", e)
-        }
-      }
-
       const { data: sub, error: subError } = await supabase
         .from("subscriptions")
         .insert({
           user_id: user.id,
-          stripe_subscription_id: stripeSubId ?? null,
+          stripe_subscription_id: stripeSubIdForOrder,
           status: "active",
           delivery_day: deliveryDay,
           cancel_at_period_end: false,

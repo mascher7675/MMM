@@ -32,8 +32,35 @@ function toLocalDateISO(d: Date): string {
   return `${yyyy}-${mm}-${dd}`
 }
 
+// 5 PM EST expressed in UTC — same convention used at signup
+// (app/actions/stripe.ts) and in the webhook (app/api/stripe/webhook/route.ts).
+const CUTOFF_HOUR_UTC = 22
+
+/**
+ * The cutoff (5 PM EST the evening before) gating the NEXT delivery on the
+ * given day. Used to reschedule Stripe's billing cycle when a customer
+ * changes their delivery day — see updateDeliveryDay below.
+ */
+function computeCutoffUnixForNextDelivery(deliveryDay: "thursday" | "friday"): number {
+  const nextDelivery = computeNextDeliveryDate(deliveryDay)
+  const [y, m, d] = nextDelivery.split("-").map(Number)
+  return Math.floor(Date.UTC(y, m - 1, d - 1, CUTOFF_HOUR_UTC, 0, 0) / 1000)
+}
+
 // ---------------------------------------------------------------------------
 // Change delivery day
+//
+// ⚠️ Must reschedule Stripe's billing cycle, not just our own delivery_day
+// column. Our billing model anchors each subscription's recurring charge to
+// a specific weekday (the cutoff) via trial_end (see app/actions/stripe.ts).
+// If we only updated Supabase, Stripe would keep charging on the OLD
+// weekday forever — silently breaking the "charge, then deliver the next
+// day" guarantee for every future week. isDeliveryDayChangeLocked() already
+// blocks changes during the Wed 5PM–Fri noon window that covers both
+// cutoffs, so whenever this function is actually allowed to run, the
+// customer's next pending charge hasn't fired yet and is safe to move by
+// the ±1 day gap between Thursday's and Friday's cutoffs — proration is
+// disabled since that gap is trivial and nothing needs crediting either way.
 // ---------------------------------------------------------------------------
 export async function updateDeliveryDay(
   subscriptionId: string,
@@ -52,13 +79,16 @@ export async function updateDeliveryDay(
       }
     }
 
-    // Fetch the current delivery_dates so we can preserve past deliveries
-    const { data: sub } = await supabase
+    // Fetch current state, including the Stripe subscription id — required
+    // to reschedule the billing cycle below.
+    const { data: sub, error: fetchError } = await supabase
       .from("subscriptions")
-      .select("skipped_dates")
+      .select("skipped_dates, stripe_subscription_id, delivery_day")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
+
+    if (fetchError || !sub) return { error: "Subscription not found", nextDeliveryDate: null }
 
     const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
 
@@ -69,17 +99,66 @@ export async function updateDeliveryDay(
     const skippedDates: string[] = Array.isArray(sub?.skipped_dates) ? sub.skipped_dates : []
     const newSkippedDates = skippedDates.filter((d) => newDeliveryDates.includes(d))
 
+    // ── Reschedule Stripe's billing cycle to the new cutoff ─────────────────
+    // Skipped entirely if the day isn't actually changing (avoids a pointless
+    // trial_end update on a no-op resubmit). If the Stripe call fails, we
+    // deliberately do NOT touch Supabase's delivery_day — better to leave
+    // the change blocked than let Supabase and Stripe disagree about which
+    // day is real.
+    let newPeriodEnd: string | null = null
+
+    if (sub.stripe_subscription_id && sub.delivery_day !== deliveryDay) {
+      const newCutoffUnix = computeCutoffUnixForNextDelivery(deliveryDay)
+      try {
+        const updated = (await stripe.subscriptions.update(sub.stripe_subscription_id, {
+          trial_end: newCutoffUnix,
+          proration_behavior: "none",
+        })) as unknown as { items: { data: { current_period_end: number }[] } }
+
+        const periodEndUnix = updated.items?.data?.[0]?.current_period_end
+        newPeriodEnd = new Date((periodEndUnix ?? newCutoffUnix) * 1000).toISOString()
+      } catch (e) {
+        console.error("Failed to reschedule Stripe billing cycle for delivery day change:", e)
+        return {
+          error: "We couldn't update your billing schedule for the new delivery day. Please contact us so we can fix this manually.",
+          nextDeliveryDate: null,
+        }
+      }
+    }
+
     const { error } = await supabase
       .from("subscriptions")
       .update({
         delivery_day: deliveryDay,
         skipped_dates: newSkippedDates,
+        ...(newPeriodEnd ? { current_period_end: newPeriodEnd } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
 
     if (error) return { error: error.message, nextDeliveryDate: null }
+
+    // Best-effort cleanup: if a weekly order row was already pre-created
+    // under the OLD delivery day (via the invoice.upcoming webhook, which
+    // can fire a few days before the cutoff — i.e. potentially before this
+    // change was made), it's now stale: it'll never be delivered on that
+    // date since the underlying Stripe charge was just moved. Cancel any
+    // such future, not-yet-fulfilled order rather than leaving it sitting
+    // in the delivery/admin views with a date that's no longer real.
+    // Failure here is logged but never blocks the actual day change above.
+    try {
+      const todayISO = toLocalDateISO(new Date())
+      await supabase
+        .from("orders")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("subscription_id", subscriptionId)
+        .in("status", ["confirmed", "skipped"])
+        .gte("delivery_date", todayISO)
+        .not("delivery_date", "in", `(${newDeliveryDates.map((d) => `"${d}"`).join(",")})`)
+    } catch (cleanupError) {
+      console.error("Non-blocking: failed to clean up stale pre-created order after delivery day change:", cleanupError)
+    }
 
     revalidatePath("/account")
     return { error: null, nextDeliveryDate }
@@ -208,17 +287,54 @@ export async function unskipWeeklyDelivery(
   }
 }
 
+/**
+ * The cutoff (5 PM EST the evening before) for a specific delivery date —
+ * used by cancelSubscriptionAtPeriodEnd to determine whether an
+ * already-charged upcoming delivery is still refundable or already locked in.
+ */
+function cutoffUnixForDelivery(deliveryDateStr: string): number {
+  const [y, m, d] = deliveryDateStr.split("-").map(Number)
+  return Math.floor(Date.UTC(y, m - 1, d - 1, CUTOFF_HOUR_UTC, 0, 0) / 1000)
+}
+
 // ---------------------------------------------------------------------------
-// Cancel subscription at period end
+// Cancel subscription
+//
+// ⚠️ Session 14 rewrite. Under our billing model, the customer is charged
+// for a delivery either at signup (week 1) or at their weekly cutoff (every
+// week after) — well before the cutoff has any bearing on whether that
+// specific charge should be considered "final." The OLD version of this
+// function used Stripe's current_period_end (the NEXT charge's cutoff,
+// auto-advanced weekly by the webhook) and searched BACKWARD from it for a
+// delivery weekday — but under this model the delivery is always the day
+// AFTER its cutoff, never on/before it, so that search pointed the wrong
+// direction and could surface a date days in the past.
+//
+// The correct question isn't "what does Stripe's period math say" — it's
+// simply: is there an upcoming, already-charged delivery for this
+// subscription whose OWN cutoff (5 PM the evening before ITS delivery date)
+// has already passed?
+// - If yes: that delivery is locked in — stop future charges
+//   (cancel_at_period_end), let this one ship as the final delivery.
+// - If no (cutoff hasn't passed yet, or nothing's been charged for an
+//   upcoming delivery at all): refund that charge if one exists, cancel the
+//   Stripe subscription immediately (not "at period end" — there's nothing
+//   left to run out), and nothing further ships or is owed.
+//
+// This directly answers "cancel before 5 PM the evening before your
+// delivery day and you're refunded, cancel after and that delivery still
+// comes" — the same policy already used for skips, now applied
+// consistently to cancellation regardless of when the charge happened to
+// land (signup or a later cutoff).
 // ---------------------------------------------------------------------------
 export async function cancelSubscriptionAtPeriodEnd(
   subscriptionId: string
-): Promise<{ error: string | null; finalDeliveryDate: string | null }> {
+): Promise<{ error: string | null; finalDeliveryDate: string | null; refunded: boolean }> {
   try {
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) {
-      return { error: "Not authenticated", finalDeliveryDate: null }
+      return { error: "Not authenticated", finalDeliveryDate: null, refunded: false }
     }
 
     const { data: sub, error: subError } = await supabase
@@ -229,7 +345,7 @@ export async function cancelSubscriptionAtPeriodEnd(
       .single()
 
     if (subError || !sub) {
-      return { error: "Subscription not found", finalDeliveryDate: null }
+      return { error: "Subscription not found", finalDeliveryDate: null, refunded: false }
     }
 
     // If stripe_subscription_id is missing, look it up from Stripe using the customer ID.
@@ -258,62 +374,132 @@ export async function cancelSubscriptionAtPeriodEnd(
       }
     }
 
+    // Find the nearest upcoming, already-charged delivery — the ONLY
+    // delivery that could possibly still be "pending" (charged but not yet
+    // shipped). Anything earlier already happened; anything later hasn't
+    // been charged yet and needs nothing from us.
+    const todayISO = toLocalDateISO(new Date())
+    const { data: pendingOrder } = await supabase
+      .from("orders")
+      .select("id, delivery_date, stripe_payment_intent_id, total")
+      .eq("subscription_id", subscriptionId)
+      .eq("user_id", user.id)
+      .neq("status", "cancelled")
+      .not("stripe_payment_intent_id", "is", null)
+      .gte("delivery_date", todayISO)
+      .order("delivery_date", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+
     let finalDeliveryDate: string | null = null
+    let refunded = false
 
-    if (sub.stripe_subscription_id) {
-      // For weekly billing, cancel_at_period_end = true means the subscription
-      // cancels at the end of the CURRENT week's billing cycle (7 days from last charge).
-      const stripeSub = await stripe.subscriptions.update(sub.stripe_subscription_id, {
-        cancel_at_period_end: true,
-      }) as unknown as { items: { data: { current_period_end: number }[] } }
+    if (pendingOrder) {
+      const cutoffUnix = cutoffUnixForDelivery(pendingOrder.delivery_date)
+      const nowUnix = Math.floor(Date.now() / 1000)
 
-      const periodEndUnix = stripeSub.items?.data?.[0]?.current_period_end
-      const periodEnd = periodEndUnix ? new Date(periodEndUnix * 1000) : null
+      if (nowUnix < cutoffUnix) {
+        // Cutoff hasn't passed yet — refund this charge and end the
+        // subscription right now. Nothing further is owed or scheduled.
+        if (pendingOrder.stripe_payment_intent_id) {
+          try {
+            const refund = await stripe.refunds.create({
+              payment_intent: pendingOrder.stripe_payment_intent_id,
+              reason: "requested_by_customer",
+            })
 
-      if (periodEnd) {
-        finalDeliveryDate = getLastDeliveryBefore(periodEnd, sub.delivery_day)
+            await supabase
+              .from("orders")
+              .update({
+                status: "cancelled",
+                stripe_refund_id: refund.id,
+                refund_amount_cents: refund.amount,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", pendingOrder.id)
+
+            refunded = true
+          } catch (refundErr) {
+            console.error("Failed to refund pending delivery on cancel:", refundErr)
+            // Fall through — still cancel the subscription even if the
+            // refund call itself failed; this needs manual follow-up.
+          }
+        }
+
+        if (sub.stripe_subscription_id) {
+          try {
+            await stripe.subscriptions.cancel(sub.stripe_subscription_id)
+          } catch (cancelErr) {
+            console.error("Failed to immediately cancel subscription after refund:", cancelErr)
+          }
+        }
+
+        finalDeliveryDate = null
+      } else {
+        // Cutoff already passed — this delivery is locked in. Stop future
+        // charges but let this one ship as the final delivery.
+        if (sub.stripe_subscription_id) {
+          await stripe.subscriptions.update(sub.stripe_subscription_id, {
+            cancel_at_period_end: true,
+          })
+        }
+        finalDeliveryDate = pendingOrder.delivery_date
       }
+    } else if (sub.stripe_subscription_id) {
+      // No pending paid delivery at all (mid-cycle, next charge hasn't
+      // happened yet) — nothing to refund, just stop future charges.
+      await stripe.subscriptions.update(sub.stripe_subscription_id, {
+        cancel_at_period_end: true,
+      })
+    }
 
-      const finalDeliveryDateISO = periodEnd
-        ? getLastDeliveryDateISO(periodEnd, sub.delivery_day)
-        : null
+    await supabase
+      .from("subscriptions")
+      .update({
+        cancel_at_period_end: !refunded,
+        final_delivery_date: finalDeliveryDate,
+        current_period_end: refunded ? null : undefined,
+        status: refunded ? "cancelled" : "active", // otherwise webhook flips this once Stripe confirms termination at period end
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", subscriptionId)
+      .eq("user_id", user.id)
 
-      await supabase
-        .from("subscriptions")
-        .update({
-          cancel_at_period_end: true,
-          current_period_end: periodEnd ? periodEnd.toISOString() : null,
-          final_delivery_date: finalDeliveryDateISO,
-          status: "active",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", subscriptionId)
-        .eq("user_id", user.id)
-    } else {
-      await supabase
-        .from("subscriptions")
-        .update({
-          cancel_at_period_end: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", subscriptionId)
-        .eq("user_id", user.id)
+    // Best-effort cleanup: cancel any OTHER future, not-yet-delivered order
+    // for this subscription beyond the one we just resolved — e.g. a
+    // preview order pre-created by invoice.upcoming for a delivery that
+    // will now never be charged.
+    try {
+      let cleanupQuery = supabase
+        .from("orders")
+        .update({ status: "cancelled", updated_at: new Date().toISOString() })
+        .eq("subscription_id", subscriptionId)
+        .neq("status", "cancelled")
+        .gte("delivery_date", todayISO)
+
+      if (finalDeliveryDate) {
+        cleanupQuery = cleanupQuery.neq("delivery_date", finalDeliveryDate)
+      }
+      await cleanupQuery
+    } catch (cleanupError) {
+      console.error("Non-blocking: failed to clean up future orders after cancel:", cleanupError)
     }
 
     await sendMessage({
       type: "cancel_request",
-      body: `Customer cancelled their subscription. Final delivery date: ${
-        finalDeliveryDate || "unknown"
-      }.`,
+      body: refunded
+        ? `Customer cancelled their subscription before their delivery cutoff. Refunded $${((pendingOrder?.total ?? 0) / 100).toFixed(2)} and ended the subscription immediately.`
+        : `Customer cancelled their subscription. Final delivery date: ${finalDeliveryDate || "none — no further deliveries"}.`,
       subscriptionId,
     })
 
     revalidatePath("/account")
-    return { error: null, finalDeliveryDate }
+    return { error: null, finalDeliveryDate, refunded }
   } catch (e) {
     return {
       error: e instanceof Error ? e.message : "Failed to cancel subscription",
       finalDeliveryDate: null,
+      refunded: false,
     }
   }
 }
@@ -507,47 +693,4 @@ export async function syncPeriodEndFromStripe(
       error: e instanceof Error ? e.message : "Failed to sync period end",
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Helper: returns ISO date string (YYYY-MM-DD) of the last delivery weekday
-// on or before `before`. Saved to DB as final_delivery_date on cancel.
-// ---------------------------------------------------------------------------
-function getLastDeliveryDateISO(before: Date, deliveryDay: string): string | null {
-  const targetDayNum = deliveryDay === "friday" ? 5 : 4
-  const d = new Date(before)
-  for (let i = 0; i < 7; i++) {
-    if (d.getDay() === targetDayNum) {
-      return toLocalDateISO(d)
-    }
-    d.setDate(d.getDate() - 1)
-  }
-  return null
-}
-
-// ---------------------------------------------------------------------------
-// Helper: find the last delivery date on a given weekday before a cutoff.
-// Returns a human-readable string for display purposes.
-// ---------------------------------------------------------------------------
-function getLastDeliveryBefore(before: Date, deliveryDay: string): string {
-  const targetDayNum = deliveryDay === "friday" ? 5 : 4
-  const d = new Date(before)
-
-  for (let i = 0; i < 7; i++) {
-    if (d.getDay() === targetDayNum) {
-      return d.toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      })
-    }
-    d.setDate(d.getDate() - 1)
-  }
-
-  return before.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  })
 }

@@ -8,6 +8,39 @@ import Stripe from "stripe"
 export const runtime = "nodejs"
 
 // ---------------------------------------------------------------------------
+// Billing model: "pay for week 1 today, renew at your cutoff" (locked
+// Session 11 — see app/actions/stripe.ts and the checklist for the full
+// design).
+//
+// - The customer pays the full weekly price AT CHECKOUT; that signup charge
+//   covers delivery #1 and is attached to the first order by the success
+//   page (saveOrderFromSession), NOT by this webhook.
+// - Immediately after checkout, the app moves the renewal to the customer's
+//   weekly cutoff via a trial_end update — Stripe generates a $0
+//   "subscription_update" invoice for that, which is noise this webhook
+//   deliberately ignores.
+// - From the first renewal onward, every weekly charge fires at the cutoff
+//   (5 PM EST the evening before delivery) and is handled here.
+//
+// Event responsibilities:
+// - invoice.upcoming        → pre-create the weekly order row a few days early
+//                             (routing/admin visibility). Preview only — no
+//                             real invoice exists yet, so no crediting here.
+// - invoice.created         → THE authoritative moment (fires at the cutoff,
+//                             when skips are locked). Ensures the order row
+//                             exists, applies the skip credit to the real
+//                             draft invoice if the week was skipped,
+//                             finalizes the order's skip state, and advances
+//                             subscriptions.current_period_end to the next
+// -                            cutoff so the DB stays fresh week over week.
+// - invoice.payment_succeeded → attach the real payment_intent to the weekly
+//                             order row so admin refunds have a charge to
+//                             act on (renewal invoices only — the signup
+//                             invoice is handled by the success page).
+// - customer.subscription.deleted → mark our subscription row cancelled.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -19,6 +52,113 @@ function unixToESTDateStr(unixTs: number): string {
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
   const dd = String(d.getUTCDate()).padStart(2, "0")
   return `${yyyy}-${mm}-${dd}`
+}
+
+/** 5 PM EST expressed in UTC — matches the cutoff convention in delivery-utils.ts. */
+const CUTOFF_HOUR_UTC = 22
+
+/**
+ * Extract the subscription id from an invoice.
+ *
+ * Under newer Stripe API versions (2025-03-31 "basil" and later, including
+ * our 2026 "clover" version), invoices no longer carry a top-level
+ * `subscription` field — it moved to invoice.parent.subscription_details.
+ * We check the modern location first and fall back to the legacy field.
+ */
+function getSubscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {
+  const invAny = invoice as unknown as {
+    parent?: {
+      subscription_details?: {
+        subscription?: string | { id: string } | null
+      } | null
+    } | null
+    subscription?: string | { id: string } | null
+  }
+
+  const modern = invAny.parent?.subscription_details?.subscription
+  if (modern) return typeof modern === "string" ? modern : modern.id
+
+  const legacy = invAny.subscription
+  if (legacy) return typeof legacy === "string" ? legacy : legacy.id
+
+  return null
+}
+
+/** Get the invoice's billing_reason (typed loosely for API-version drift). */
+function getBillingReason(invoice: Stripe.Invoice): string | null {
+  return (invoice as unknown as { billing_reason?: string | null }).billing_reason ?? null
+}
+
+/**
+ * Resolve the payment_intent id for an invoice.
+ *
+ * Modern API versions don't include payment_intent on the invoice object —
+ * payments live in the invoice's `payments` list, which requires an explicit
+ * retrieve with expand. Legacy field checked as a fallback.
+ */
+async function resolvePaymentIntentForInvoice(invoiceId: string): Promise<string | null> {
+  try {
+    const invoice = await stripe.invoices.retrieve(invoiceId, {
+      expand: ["payments"],
+    })
+
+    const invAny = invoice as unknown as {
+      payment_intent?: string | { id: string } | null
+      payments?: {
+        data?: Array<{
+          payment?: {
+            type?: string
+            payment_intent?: string | { id: string } | null
+          }
+        }>
+      }
+    }
+
+    const fromPayments = invAny.payments?.data
+      ?.map((p) => p.payment?.payment_intent)
+      .find((pi) => !!pi)
+
+    const raw = fromPayments ?? invAny.payment_intent ?? null
+    return typeof raw === "string" ? raw : raw?.id ?? null
+  } catch (e) {
+    console.error(`[webhook] Failed to resolve payment_intent for invoice ${invoiceId}:`, e)
+    return null
+  }
+}
+
+/**
+ * Given a billing period start (the cutoff moment) and the customer's
+ * delivery day, find the delivery this charge pays for: the FIRST occurrence
+ * of the delivery day ON or AFTER the period start.
+ *
+ * Charge Wed 5 PM → delivery Thursday (next day).
+ * Charge Thu 5 PM → delivery Friday (next day).
+ */
+function getDeliveryDateForPeriod(
+  periodStart: string,
+  deliveryDay: "thursday" | "friday"
+): string | null {
+  const targetDayNum = deliveryDay === "friday" ? 5 : 4
+  const [y, m, d] = periodStart.split("-").map(Number)
+  const date = new Date(y, m - 1, d)
+
+  for (let i = 0; i <= 7; i++) {
+    if (date.getDay() === targetDayNum) {
+      const yyyy = date.getFullYear()
+      const mm = String(date.getMonth() + 1).padStart(2, "0")
+      const dd = String(date.getDate()).padStart(2, "0")
+      return `${yyyy}-${mm}-${dd}`
+    }
+    date.setDate(date.getDate() + 1)
+  }
+
+  return null
+}
+
+/** The next cutoff after a given delivery date: delivery + 6 days, 5 PM EST. */
+function nextPeriodEndISOFromDelivery(deliveryDate: string): string {
+  const [y, m, d] = deliveryDate.split("-").map(Number)
+  return new Date(Date.UTC(y, m - 1, d + 6, CUTOFF_HOUR_UTC, 0, 0)).toISOString()
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +191,10 @@ export async function POST(request: NextRequest) {
     switch (event.type) {
       case "invoice.upcoming":
         await handleInvoiceUpcoming(event.data.object as Stripe.Invoice)
+        break
+
+      case "invoice.created":
+        await handleInvoiceCreated(event.data.object as Stripe.Invoice)
         break
 
       case "invoice.payment_succeeded":
@@ -102,85 +246,197 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 }
 
 // ---------------------------------------------------------------------------
-// invoice.upcoming handler
-//
-// Fires as a PREVIEW, hours before Stripe actually charges the card. This is
-// when we create the weekly order row (so delivery/route planning can see it
-// coming) — but there is no real charge yet at this point, so no
-// payment_intent exists to attach. That happens later, in
-// handleInvoicePaymentSucceeded below.
+// Shared: look up our subscription row + the delivery date for an invoice.
 // ---------------------------------------------------------------------------
-async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
-  const invoiceAny = invoice as unknown as { subscription?: string | { id: string } }
-  const stripeSubscriptionId =
-    typeof invoiceAny.subscription === "string"
-      ? invoiceAny.subscription
-      : invoiceAny.subscription?.id
+type WebhookSub = {
+  id: string
+  status: string
+  delivery_day: "thursday" | "friday"
+  skipped_dates: string[]
+}
 
-  if (!stripeSubscriptionId) return
+async function lookupSubAndDeliveryDate(
+  invoice: Stripe.Invoice,
+  eventLabel: string
+): Promise<{ stripeSubscriptionId: string; sub: WebhookSub; deliveryDate: string } | null> {
+  const stripeSubscriptionId = getSubscriptionIdFromInvoice(invoice)
+
+  if (!stripeSubscriptionId) {
+    console.log(
+      `[webhook] ${eventLabel}: invoice ${invoice.id ?? "(preview)"} has no subscription attached — skipping (expected for one-time invoices or bare stripe trigger fixtures)`
+    )
+    return null
+  }
 
   const supabase = await createClient()
+  const { data: rows, error: subError } = await supabase.rpc("get_subscription_for_webhook", {
+    p_stripe_subscription_id: stripeSubscriptionId,
+  })
 
-  const { data: rows, error: subError } = await supabase
-    .rpc("get_subscription_for_webhook", {
-      p_stripe_subscription_id: stripeSubscriptionId,
-    })
-
-  const sub = rows?.[0] ?? null
-
-  if (subError || !sub) {
-    console.log(`[webhook] invoice.upcoming: no subscription found for ${stripeSubscriptionId}`)
-    return
+  const subRow = rows?.[0] ?? null
+  if (subError || !subRow) {
+    console.log(`[webhook] ${eventLabel}: no subscription found for ${stripeSubscriptionId}`)
+    return null
   }
+
+  const sub: WebhookSub = {
+    id: subRow.id,
+    status: subRow.status,
+    delivery_day: subRow.delivery_day === "thursday" ? "thursday" : "friday",
+    skipped_dates: Array.isArray(subRow.skipped_dates) ? subRow.skipped_dates : [],
+  }
+
+  const periodStartDate = unixToESTDateStr(invoice.period_start)
+  const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day)
+
+  if (!deliveryDate) {
+    console.log(
+      `[webhook] ${eventLabel}: could not determine delivery date for period starting ${periodStartDate}`
+    )
+    return null
+  }
+
+  return { stripeSubscriptionId, sub, deliveryDate }
+}
+
+// ---------------------------------------------------------------------------
+// invoice.upcoming handler
+//
+// PREVIEW event — fires a few days before the cutoff. We pre-create the
+// weekly order row here so it shows up early for routing/admin planning.
+// No real invoice exists yet, so no crediting and no skipped_dates mutation
+// happens here — that's invoice.created's job (the authoritative moment).
+// ---------------------------------------------------------------------------
+async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
+  const ctx = await lookupSubAndDeliveryDate(invoice, "invoice.upcoming")
+  if (!ctx) return
+  const { sub, deliveryDate } = ctx
 
   if (sub.status !== "active") return
 
-  const periodStartDate = unixToESTDateStr(invoice.period_start)
-  const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day as "thursday" | "friday")
+  const supabase = await createClient()
+  const isSkipped = sub.skipped_dates.includes(deliveryDate)
 
-  if (!deliveryDate) {
-    console.log(`[webhook] invoice.upcoming: could not determine delivery date for period starting ${periodStartDate}`)
+  const { data: orderResult, error: orderError } = await supabase.rpc("create_weekly_delivery_order", {
+    p_subscription_id: sub.id,
+    p_delivery_date: deliveryDate,
+    p_status: isSkipped ? "skipped" : "confirmed",
+    p_stripe_invoice_id: "", // preview invoices have no real id
+  })
+
+  if (orderError) {
+    console.error(`[webhook] invoice.upcoming: failed to create weekly order for sub ${sub.id}:`, orderError.message)
     return
   }
 
-  const skippedDates: string[] = Array.isArray(sub.skipped_dates) ? sub.skipped_dates : []
-  const isSkipped = skippedDates.includes(deliveryDate)
+  const result = orderResult as { error: string | null; skipped_duplicate?: boolean; order_id?: string }
+  if (result?.skipped_duplicate) {
+    console.log(`[webhook] invoice.upcoming: weekly order already exists for sub ${sub.id} on ${deliveryDate}`)
+  } else if (result?.order_id) {
+    console.log(
+      `[webhook] invoice.upcoming: pre-created ${isSkipped ? "skipped" : "confirmed"} order ${result.order_id} for sub ${sub.id} on ${deliveryDate}`
+    )
+  }
+}
 
-  const { data: orderResult, error: orderError } = await supabase
-    .rpc("create_weekly_delivery_order", {
-      p_subscription_id: sub.id,
-      p_delivery_date: deliveryDate,
-      p_status: isSkipped ? "skipped" : "confirmed",
-      p_stripe_invoice_id: invoice.id ?? "",
-    })
+// ---------------------------------------------------------------------------
+// invoice.created handler
+//
+// Fires when the REAL invoice is created at the cutoff (5 PM EST the evening
+// before delivery). The skip window is locked at this exact moment, so the
+// subscription's skipped_dates are final for this delivery. Subscription
+// renewal invoices are created as drafts and auto-finalize about an hour
+// later, which gives us the window to attach a credit line item.
+//
+// Responsibilities:
+// 1. Ensure the weekly order row exists (safety net if invoice.upcoming
+//    didn't fire or was missed).
+// 2. Advance subscriptions.current_period_end to the next cutoff, so the
+//    DB stays accurate week over week instead of freezing at the signup
+//    value.
+// 3. If the week is skipped: credit the full amount on this draft invoice,
+//    mark the order skipped, and clear the date from skipped_dates.
+// 4. If NOT skipped (including "skipped, then changed their mind"): make sure
+//    the order row says confirmed.
+// ---------------------------------------------------------------------------
+async function handleInvoiceCreated(invoice: Stripe.Invoice) {
+  // Only weekly renewal invoices. The signup invoice (subscription_create)
+  // is fully handled at checkout, the $0 trial-reschedule invoice
+  // (subscription_update) needs nothing, and manual invoices aren't ours
+  // to touch.
+  if (getBillingReason(invoice) !== "subscription_cycle") return
+
+  const ctx = await lookupSubAndDeliveryDate(invoice, "invoice.created")
+  if (!ctx) return
+  const { stripeSubscriptionId, sub, deliveryDate } = ctx
+
+  const supabase = await createClient()
+  const isSkipped = sub.skipped_dates.includes(deliveryDate)
+
+  // 1. Ensure the order row exists (idempotent — duplicate-safe RPC).
+  const { data: orderResult, error: orderError } = await supabase.rpc("create_weekly_delivery_order", {
+    p_subscription_id: sub.id,
+    p_delivery_date: deliveryDate,
+    p_status: isSkipped ? "skipped" : "confirmed",
+    p_stripe_invoice_id: invoice.id ?? "",
+  })
 
   if (orderError) {
-    console.error(`[webhook] Failed to create weekly delivery order for sub ${sub.id}:`, orderError.message)
+    console.error(`[webhook] invoice.created: failed to ensure weekly order for sub ${sub.id}:`, orderError.message)
   } else {
     const result = orderResult as { error: string | null; skipped_duplicate?: boolean; order_id?: string }
-    if (result?.skipped_duplicate) {
-      console.log(`[webhook] Weekly order already exists for sub ${sub.id} on ${deliveryDate} — skipping duplicate`)
-    } else if (result?.order_id) {
-      console.log(`[webhook] Created ${isSkipped ? "skipped" : "confirmed"} order ${result.order_id} for sub ${sub.id} on ${deliveryDate}`)
+    if (result?.order_id && !result?.skipped_duplicate) {
+      console.log(
+        `[webhook] invoice.created: created ${isSkipped ? "skipped" : "confirmed"} order ${result.order_id} for sub ${sub.id} on ${deliveryDate} (upcoming didn't pre-create it)`
+      )
     }
+  }
+
+  // 2. Advance current_period_end to the next cutoff (this charge's period
+  //    ends at the following week's cutoff = delivery + 6 days, 5 PM EST).
+  const nextPeriodEnd = nextPeriodEndISOFromDelivery(deliveryDate)
+  const { error: periodError } = await supabase.rpc("update_subscription_period_end", {
+    p_stripe_subscription_id: stripeSubscriptionId,
+    p_period_end: nextPeriodEnd,
+  })
+  if (periodError) {
+    console.error(
+      `[webhook] invoice.created: failed to advance current_period_end for sub ${sub.id}:`,
+      periodError.message
+    )
+  } else {
+    console.log(`[webhook] invoice.created: advanced current_period_end to ${nextPeriodEnd} for sub ${sub.id}`)
+  }
+
+  // 3. Make the order's skip state authoritative (order may have been
+  //    pre-created with a stale state by invoice.upcoming days ago).
+  const { error: stateError } = await supabase.rpc("set_weekly_order_skip_state", {
+    p_stripe_subscription_id: stripeSubscriptionId,
+    p_delivery_date: deliveryDate,
+    p_skipped: isSkipped,
+  })
+  if (stateError) {
+    console.error(`[webhook] invoice.created: failed to set skip state for sub ${sub.id} on ${deliveryDate}:`, stateError.message)
   }
 
   if (!isSkipped) return
 
+  // 4. Skipped week: credit the full recurring amount on this draft invoice
+  //    so the customer pays $0 for it.
   const amountToCredit = invoice.amount_due
 
-  if (amountToCredit > 0) {
+  if (amountToCredit > 0 && invoice.id) {
     const customerId =
       typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id
 
     if (!customerId) {
-      console.error("[webhook] invoice.upcoming: no customer on invoice", invoice.id)
+      console.error("[webhook] invoice.created: no customer on invoice", invoice.id)
       return
     }
 
     console.log(
-      `[webhook] Skipping delivery ${deliveryDate} for sub ${stripeSubscriptionId}. ` +
-      `Crediting $${(amountToCredit / 100).toFixed(2)} on invoice ${invoice.id}`
+      `[webhook] invoice.created: skipping delivery ${deliveryDate} for sub ${stripeSubscriptionId}. ` +
+        `Crediting $${(amountToCredit / 100).toFixed(2)} on invoice ${invoice.id}`
     )
 
     await stripe.invoiceItems.create({
@@ -188,58 +444,65 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
       amount: -amountToCredit,
       currency: invoice.currency,
       description: `Skipped delivery — ${deliveryDate}`,
-      invoice: invoice.id ?? undefined,
+      invoice: invoice.id,
     })
   }
 
-  const newSkippedDates = skippedDates.filter((d) => d !== deliveryDate)
+  // 5. Clear the consumed skip date.
+  const newSkippedDates = sub.skipped_dates.filter((d) => d !== deliveryDate)
 
-  const { error: updateError } = await supabase
-    .rpc("update_subscription_skipped_dates", {
-      p_subscription_id: sub.id,
-      p_skipped_dates: newSkippedDates,
-    })
+  const { error: updateError } = await supabase.rpc("update_subscription_skipped_dates", {
+    p_subscription_id: sub.id,
+    p_skipped_dates: newSkippedDates,
+  })
 
   if (updateError) {
-    console.error(`[webhook] Failed to update skipped_dates for sub ${sub.id}:`, updateError.message)
+    console.error(`[webhook] invoice.created: failed to update skipped_dates for sub ${sub.id}:`, updateError.message)
   } else {
-    console.log(`[webhook] Removed ${deliveryDate} from skipped_dates for sub ${sub.id}`)
+    console.log(`[webhook] invoice.created: removed ${deliveryDate} from skipped_dates for sub ${sub.id}`)
   }
 }
 
 // ---------------------------------------------------------------------------
 // invoice.payment_succeeded handler
 //
-// Fires once Stripe has actually charged the card for a subscription invoice.
-// Attaches the real payment_intent to the matching weekly order row (created
-// earlier by invoice.upcoming) so admin refunds have something to refund
-// against. $0 invoices (e.g. a fully-credited skipped week) produce no
-// payment_intent — nothing to attach in that case, which is expected.
+// Fires once Stripe has actually charged the card. Attaches the real
+// payment_intent to the matching weekly order row so admin refunds have a
+// charge to act on.
+//
+// Renewal invoices only. Two signup-time invoice types are deliberately
+// ignored with clear logs (they fire during checkout, before our DB rows
+// even exist, and need nothing from this handler):
+// - billing_reason "subscription_create": the week-1 charge — the success
+//   page (saveOrderFromSession) creates the order AND attaches this payment
+//   itself, from the signup invoice.
+// - billing_reason "subscription_update": the $0 invoice Stripe generates
+//   when the app moves the renewal to the cutoff via trial_end.
 // ---------------------------------------------------------------------------
 async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
-  const invoiceAny = invoice as unknown as {
-    subscription?: string | { id: string } | null
-    payment_intent?: string | { id: string } | null
-  }
+  const billingReason = getBillingReason(invoice)
 
-  const stripeSubscriptionId =
-    typeof invoiceAny.subscription === "string"
-      ? invoiceAny.subscription
-      : invoiceAny.subscription?.id
-
-  // Not a subscription invoice (e.g. a one-time order, or a bare invoice like
-  // the one `stripe trigger invoice.payment_succeeded` generates by default —
-  // that fixture creates a standalone invoice with no subscription attached
-  // at all) — nothing for us to do here.
-  if (!stripeSubscriptionId) {
-    console.log(`[webhook] invoice.payment_succeeded: invoice ${invoice.id} has no subscription attached — skipping (expected for one-time invoices or the default stripe trigger fixture)`)
+  if (billingReason === "subscription_create") {
+    console.log(
+      `[webhook] invoice.payment_succeeded: signup invoice ${invoice.id} — expected; the checkout success page attaches this payment to the first order itself. Nothing to do here.`
+    )
     return
   }
 
-  const paymentIntentId =
-    typeof invoiceAny.payment_intent === "string"
-      ? invoiceAny.payment_intent
-      : invoiceAny.payment_intent?.id
+  if (billingReason === "subscription_update") {
+    console.log(
+      `[webhook] invoice.payment_succeeded: $0 trial-reschedule invoice ${invoice.id} — expected side effect of moving the renewal to the cutoff. Nothing to do here.`
+    )
+    return
+  }
+
+  const ctx = await lookupSubAndDeliveryDate(invoice, "invoice.payment_succeeded")
+  if (!ctx) return
+  const { stripeSubscriptionId, sub, deliveryDate } = ctx
+
+  if (!invoice.id) return
+
+  const paymentIntentId = await resolvePaymentIntentForInvoice(invoice.id)
 
   if (!paymentIntentId) {
     console.log(
@@ -250,33 +513,12 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
 
   const supabase = await createClient()
 
-  const { data: rows, error: subError } = await supabase
-    .rpc("get_subscription_for_webhook", {
-      p_stripe_subscription_id: stripeSubscriptionId,
-    })
-
-  const sub = rows?.[0] ?? null
-
-  if (subError || !sub) {
-    console.log(`[webhook] invoice.payment_succeeded: no subscription found for ${stripeSubscriptionId}`)
-    return
-  }
-
-  const periodStartDate = unixToESTDateStr(invoice.period_start)
-  const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day as "thursday" | "friday")
-
-  if (!deliveryDate) {
-    console.log(`[webhook] invoice.payment_succeeded: could not determine delivery date for period starting ${periodStartDate}`)
-    return
-  }
-
-  const { data: attachResult, error: attachError } = await supabase
-    .rpc("attach_payment_to_weekly_order", {
-      p_stripe_subscription_id: stripeSubscriptionId,
-      p_delivery_date: deliveryDate,
-      p_stripe_payment_intent_id: paymentIntentId,
-      p_stripe_invoice_id: invoice.id ?? "",
-    })
+  const { data: attachResult, error: attachError } = await supabase.rpc("attach_payment_to_weekly_order", {
+    p_stripe_subscription_id: stripeSubscriptionId,
+    p_delivery_date: deliveryDate,
+    p_stripe_payment_intent_id: paymentIntentId,
+    p_stripe_invoice_id: invoice.id,
+  })
 
   if (attachError) {
     console.error(
@@ -293,32 +535,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     )
   } else {
     console.log(
-      `[webhook] invoice.payment_succeeded: no matching order row found for sub ${sub.id} on ${deliveryDate} — order may not have been created yet`
+      `[webhook] invoice.payment_succeeded: no matching order row found for sub ${sub.id} on ${deliveryDate}`
     )
   }
-}
-
-// ---------------------------------------------------------------------------
-// Utility: given a period_start date (always a Friday) and delivery day,
-// find the matching delivery date for that billing period.
-// ---------------------------------------------------------------------------
-function getDeliveryDateForPeriod(
-  periodStart: string,
-  deliveryDay: "thursday" | "friday"
-): string | null {
-  const targetDayNum = deliveryDay === "friday" ? 5 : 4
-  const [y, m, d] = periodStart.split("-").map(Number)
-  const date = new Date(y, m - 1, d)
-
-  for (let i = 0; i < 7; i++) {
-    if (date.getDay() === targetDayNum) {
-      const yyyy = date.getFullYear()
-      const mm = String(date.getMonth() + 1).padStart(2, "0")
-      const dd = String(date.getDate()).padStart(2, "0")
-      return `${yyyy}-${mm}-${dd}`
-    }
-    date.setDate(date.getDate() - 1)
-  }
-
-  return null
 }

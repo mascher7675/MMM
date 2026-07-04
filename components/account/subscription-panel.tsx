@@ -131,17 +131,6 @@ function getNextDeliveryDateSkipAware(
   return candidate
 }
  
-function getFinalDeliveryDate(deliveryDay: string, periodEnd: Date): Date | null {
-  const targetDayNum = deliveryDay === "friday" ? FRIDAY : THURSDAY
-  const d = new Date(periodEnd)
-  d.setHours(0, 0, 0, 0)
-  for (let i = 0; i < 7; i++) {
-    if (d.getDay() === targetDayNum) return d
-    d.setDate(d.getDate() - 1)
-  }
-  return null
-}
- 
 // Deterministic date helpers — avoid toLocaleDateString() to prevent hydration errors
 const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
 const MONTHS_LONG = ["January","February","March","April","May","June","July","August","September","October","November","December"]
@@ -580,50 +569,20 @@ function SingleSubscriptionCard({
   }
  
   // ── Delivery date calculations ────────────────────────────────────────────
- 
-  const finalDeliveryDate: Date | null = (() => {
-    if (!isCancellationScheduled) return null
-    if (activeSubscription.final_delivery_date) {
-      return new Date(activeSubscription.final_delivery_date + "T12:00:00")
-    }
-    if (activeSubscription.current_period_end) {
-      const periodEnd = new Date(activeSubscription.current_period_end)
-      periodEnd.setUTCHours(23, 59, 59, 999)
-      return getFinalDeliveryDate(activeSubscription.delivery_day, periodEnd)
-    }
-    return null
-  })()
- 
-  const allDeliveries: Date[] = (() => {
-    if (!finalDeliveryDate) return []
-    const dates: Date[] = []
-    const cursor = new Date(finalDeliveryDate)
-    cursor.setHours(0, 0, 0, 0)
-    for (let i = 0; i < 4; i++) {
-      dates.unshift(new Date(cursor))
-      cursor.setDate(cursor.getDate() - 7)
-    }
-    return dates
-  })()
- 
-  const remainingDeliveries = todayISO
-    ? allDeliveries.filter((d) => {
-        const dISO = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
-        return dISO >= todayISO && !localSkippedDates.includes(dISO)
-      })
-    : []
- 
-  const lastDeliveryDisplay: string | null = finalDeliveryDate
-    ? formatDateLong(toDateStr(finalDeliveryDate))
-    : cancelSessionFinalDate ?? null
+  // Session 14: final_delivery_date is now always set correctly and
+  // directly by cancelSubscriptionAtPeriodEnd on the server — either a real
+  // upcoming delivery date (already charged AND its cutoff has already
+  // passed, so it's locked in and will still ship) or null (nothing more
+  // owed or scheduled — refunded immediately if the cutoff hadn't passed
+  // yet). No client-side re-derivation from current_period_end needed
+  // anymore; the old getFinalDeliveryDate()/remainingDeliveries logic
+  // searched the wrong direction relative to our billing model (cutoff is
+  // the day BEFORE delivery, not on/after it) and could show a delivery
+  // date days in the past. Trust the server value directly.
+  const finalDeliveryDisplay: string | null = activeSubscription.final_delivery_date
+    ? formatDateLong(activeSubscription.final_delivery_date)
+    : null
 
-  // True when the subscription's final (already-paid-for) delivery date was
-  // itself skipped by the customer — meaning no delivery will actually go
-  // out before the subscription ends, even though a "final delivery" date
-  // is on record.
-  const finalDeliveryWasSkipped =
-    !!finalDeliveryDate && localSkippedDates.includes(toDateStr(finalDeliveryDate))
- 
   const skippedCount = localSkippedDates.filter((d) => upcomingDates.includes(d)).length
  
   // ── Render ────────────────────────────────────────────────────────────────
@@ -645,40 +604,11 @@ function SingleSubscriptionCard({
               <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
                 Cancellation scheduled
               </p>
-              {remainingDeliveries.length > 0 ? (
-                <div className="space-y-1">
-                  <p className="text-xs text-amber-700 dark:text-amber-400">
-                    You&apos;ve already paid for{" "}
-                    <span className="font-semibold">
-                      {remainingDeliveries.length}{" "}
-                      {remainingDeliveries.length === 1 ? "delivery" : "deliveries"}
-                    </span>
-                    , so {remainingDeliveries.length === 1 ? "it" : "they"} will still go out as scheduled:
-                  </p>
-                  <ul className="space-y-0.5">
-                    {remainingDeliveries.map((d, i) => (
-                      <li
-                        key={d.toISOString()}
-                        className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400"
-                      >
-                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400 dark:bg-amber-500 shrink-0" />
-                        <span className={i === remainingDeliveries.length - 1 ? "font-medium" : ""}>
-                          {formatDateLong(toDateStr(d))}
-                          {i === remainingDeliveries.length - 1 && " — final delivery"}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : finalDeliveryWasSkipped ? (
+              {finalDeliveryDisplay ? (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  You skipped your final delivery (
-                  <span className="font-medium">{lastDeliveryDisplay}</span>), so no further deliveries are
-                  scheduled — your subscription will end without one.
-                </p>
-              ) : lastDeliveryDisplay ? (
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Your last delivery was on <span className="font-medium">{lastDeliveryDisplay}</span>.
+                  Your delivery on <span className="font-medium">{finalDeliveryDisplay}</span> was already
+                  charged before you cancelled, so it will still go out as your final delivery. No further
+                  charges will occur.
                 </p>
               ) : (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
@@ -688,7 +618,7 @@ function SingleSubscriptionCard({
                       Loading delivery schedule…
                     </span>
                   ) : (
-                    "Your deliveries will stop at the end of the current billing period."
+                    "You won't be charged again, and no further deliveries are scheduled."
                   )}
                 </p>
               )}
@@ -1002,9 +932,10 @@ function SingleSubscriptionCard({
               <AlertDialogHeader>
                 <AlertDialogTitle>Cancel your subscription?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  You&apos;ve already paid for this week&apos;s delivery, so it will still go out as scheduled
-                  (unless you&apos;ve skipped it) — cancelling just stops future charges and deliveries after
-                  that. If you only want to skip a week or two instead, use &ldquo;Skip a Delivery&rdquo; above.
+                  If your next delivery&apos;s cutoff (5 PM the evening before) hasn&apos;t passed yet,
+                  cancelling now refunds that charge and nothing ships. If it has already passed, that
+                  delivery is locked in and will still go out. Either way, you won&apos;t be charged again.
+                  If you only want to skip a week or two instead, use &ldquo;Skip a Delivery&rdquo; above.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
