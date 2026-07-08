@@ -98,8 +98,6 @@ export function CashCustomerModal({ onClose, onCreated }: Props) {
   const handleSubmit = async () => {
     if (!form.first_name.trim()) { setError("First name is required."); return }
     if (!form.last_name.trim()) { setError("Last name is required."); return }
-    if (!form.phone.trim()) { setError("Phone is required."); return }
-    if (!form.email.trim()) { setError("Email is required."); return }
     if (!form.address.trim()) { setError("Street address is required."); return }
     if (!form.city.trim()) { setError("City is required."); return }
     if (!form.state.trim()) { setError("State is required."); return }
@@ -207,7 +205,7 @@ export function CashCustomerModal({ onClose, onCreated }: Props) {
                 {/* Contact */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Phone</label>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Phone <span className="font-normal text-muted-foreground/70">(optional)</span></label>
                     <input
                       value={form.phone} onChange={handlePhoneChange}
                       type="tel" inputMode="numeric" placeholder="(123)-456-7890" maxLength={14}
@@ -215,7 +213,7 @@ export function CashCustomerModal({ onClose, onCreated }: Props) {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Email</label>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">Email <span className="font-normal text-muted-foreground/70">(optional)</span></label>
                     <input value={form.email} onChange={e => setField("email", e.target.value)} type="email" className={inputCls} />
                   </div>
                 </div>

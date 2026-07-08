@@ -561,6 +561,93 @@ export async function updateCashCustomer(
   }
 }
 
+// Edit an EXISTING cash-customer subscription's weekly items and/or delivery
+// day. This updates the recurring template (subscriptions + subscription_items)
+// that the delivery route is built from live each week — it does not touch
+// already-created order rows. Use adminUpdateSubscriptionStatus (Subscriptions
+// tab) or the cancel button in this flow to cancel the subscription itself.
+export async function updateCashCustomerSubscription(
+  subscriptionId: string,
+  data: {
+    delivery_day?: "thursday" | "friday"
+    items?: { product_name: string; size: string; quantity: number }[]
+  }
+): Promise<{ error: string | null }> {
+  try {
+    const { supabase } = await requireAdmin()
+
+    const { data: sub, error: subError } = await supabase
+      .from("subscriptions")
+      .select("id, user_id")
+      .eq("id", subscriptionId)
+      .single()
+
+    if (subError || !sub) return { error: "Subscription not found" }
+
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("is_cash_customer")
+      .eq("id", sub.user_id)
+      .single()
+
+    if (profileError || !profile?.is_cash_customer) {
+      return { error: "This subscription does not belong to a cash customer" }
+    }
+
+    if (data.delivery_day) {
+      const { error: dayError } = await supabase
+        .from("subscriptions")
+        .update({ delivery_day: data.delivery_day, updated_at: new Date().toISOString() })
+        .eq("id", subscriptionId)
+      if (dayError) return { error: dayError.message }
+    }
+
+    if (data.items) {
+      if (data.items.length === 0) return { error: "At least one item is required." }
+
+      const { error: deleteError } = await supabase
+        .from("subscription_items")
+        .delete()
+        .eq("subscription_id", subscriptionId)
+      if (deleteError) return { error: deleteError.message }
+
+      const pricedItems = data.items.map((item) => ({
+        ...item,
+        price_cents: getCashSubscriptionPriceCents(item.product_name, item.size),
+      }))
+
+      const subItems = pricedItems.flatMap((item) =>
+        Array.from({ length: item.quantity }, () => ({
+          subscription_id: subscriptionId,
+          product_name: item.product_name,
+          size: item.size,
+          quantity: 1,
+          price_cents: item.price_cents,
+          created_at: new Date().toISOString(),
+        }))
+      )
+      const { error: itemsError } = await supabase.from("subscription_items").insert(subItems)
+      if (itemsError) return { error: itemsError.message }
+    }
+
+    // Reflect the change immediately in the orders table for the next
+    // upcoming delivery, instead of waiting on the daily cron
+    // (run_cash_subscription_weekly_orders). Best-effort: if this fails,
+    // the daily cron will still pick it up, so we don't fail the whole save.
+    const { error: ensureError } = await supabase.rpc("ensure_cash_weekly_order_for_subscription", {
+      p_subscription_id: subscriptionId,
+    })
+    if (ensureError) {
+      console.error(`updateCashCustomerSubscription: failed to ensure weekly order for ${subscriptionId}:`, ensureError.message)
+    }
+
+    revalidatePath("/admin")
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to update subscription" }
+  }
+}
+
 export async function addOrderToCashCustomer(
   customerId: string,
   data: {
@@ -1242,40 +1329,6 @@ export async function deleteOrphanedOrder(
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to delete order" }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Subscription delivery log — kept for backwards compat with existing logs
-// ---------------------------------------------------------------------------
-export async function upsertSubscriptionDeliveryLog(
-  orderId: string,
-  deliveryDate: string,
-  deliveryState: string,
-  adminNotes?: string
-): Promise<{ error: string | null }> {
-  try {
-    const { supabase } = await requireAdmin()
-    const now = new Date().toISOString()
-
-    const { error } = await supabase
-      .from("subscription_delivery_logs")
-      .upsert(
-        {
-          order_id: orderId,
-          delivery_date: deliveryDate,
-          delivery_state: deliveryState,
-          admin_notes: adminNotes ?? null,
-          updated_at: now,
-        },
-        { onConflict: "order_id,delivery_date" }
-      )
-
-    if (error) return { error: error.message }
-    revalidatePath("/admin")
-    return { error: null }
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "Failed to save delivery log" }
   }
 }
 

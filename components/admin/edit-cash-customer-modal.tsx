@@ -1,26 +1,45 @@
 // components/admin/edit-cash-customer-modal.tsx
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import {
-  Banknote, Repeat, ShoppingBag, Plus, Trash2, RefreshCw, Check, X, Save,
+  Banknote, Repeat, ShoppingBag, Plus, Trash2, RefreshCw, Check, X, Save, Settings, AlertTriangle,
 } from "lucide-react"
 import {
   updateCashCustomer,
   addOrderToCashCustomer,
   addSubscriptionToCashCustomer,
+  updateCashCustomerSubscription,
+  adminUpdateSubscriptionStatus,
+  getCashCustomerHistory,
 } from "@/app/actions/admin"
 import { PRODUCT_OPTIONS } from "@/lib/products"
 import { getUpcomingThursFri } from "./admin-types"
 import { computeNextDeliveryDate } from "@/lib/delivery-utils"
-import type { AdminCustomer } from "@/app/actions/admin"
+import type { AdminCustomer, CustomerHistorySubscription } from "@/app/actions/admin"
 
 interface Props {
   customer: AdminCustomer
   onClose: () => void
 }
 
-type EditTab = "profile" | "add_order" | "add_subscription"
+type EditTab = "profile" | "add_order" | "add_subscription" | "manage_subscription"
+
+type ManageItem = { product_name: string; size: string; quantity: number }
+
+function groupSubscriptionItems(
+  items: { product_name: string | null; size: string; quantity: number }[]
+): ManageItem[] {
+  const grouped = new Map<string, ManageItem>()
+  for (const it of items) {
+    const name = it.product_name ?? "Oat Milk - 32oz"
+    const key = `${name}__${it.size}`
+    const existing = grouped.get(key)
+    if (existing) existing.quantity += it.quantity
+    else grouped.set(key, { product_name: name, size: it.size, quantity: it.quantity })
+  }
+  return Array.from(grouped.values())
+}
 
 function formatPhoneNumber(digits: string): string {
   const d = digits.slice(0, 10)
@@ -104,6 +123,35 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
   const [subStartDate, setSubStartDate] = useState(START_DATE_OPTIONS[0]?.value ?? "")
   const [subItems, setSubItems] = useState([{ product_name: "Oat Milk - 32oz", size: "32oz", quantity: 1 }])
 
+  // ── Manage (edit/cancel) existing subscription state
+  const [activeSubs, setActiveSubs] = useState<CustomerHistorySubscription[]>([])
+  const [subsLoading, setSubsLoading] = useState(true)
+  const [selectedSubId, setSelectedSubId] = useState<string | null>(null)
+  const [manageDeliveryDay, setManageDeliveryDay] = useState<"thursday" | "friday">("thursday")
+  const [manageItems, setManageItems] = useState<ManageItem[]>([])
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+
+  const selectSub = (sub: CustomerHistorySubscription) => {
+    setSelectedSubId(sub.id)
+    setManageDeliveryDay((sub.delivery_day === "friday" ? "friday" : "thursday"))
+    setManageItems(groupSubscriptionItems(sub.items))
+  }
+
+  useEffect(() => {
+    let cancelled = false
+    setSubsLoading(true)
+    getCashCustomerHistory(customer.id).then(res => {
+      if (cancelled) return
+      setSubsLoading(false)
+      if (res.error) return
+      const active = res.subscriptions.filter(s => s.status === "active")
+      setActiveSubs(active)
+      if (active.length > 0) selectSub(active[0])
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer.id])
+
   const addItem = (setter: React.Dispatch<React.SetStateAction<{ product_name: string; size: string; quantity: number }[]>>) =>
     setter(prev => [...prev, { product_name: "Oat Milk - 32oz", size: "32oz", quantity: 1 }])
 
@@ -168,10 +216,45 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
     setSuccess("Subscription created for this customer.")
   }
 
+  const handleSaveSubscription = async () => {
+    reset()
+    if (!selectedSubId) return
+    if (manageItems.length === 0) { setError("At least one item is required."); return }
+    setSaving(true)
+    const result = await updateCashCustomerSubscription(selectedSubId, {
+      delivery_day: manageDeliveryDay,
+      items: manageItems,
+    })
+    setSaving(false)
+    if (result.error) { setError(result.error); return }
+    setSuccess("Subscription updated — changes apply to the delivery route going forward.")
+    setActiveSubs(prev => prev.map(s => s.id === selectedSubId
+      ? { ...s, delivery_day: manageDeliveryDay, items: manageItems }
+      : s))
+  }
+
+  const handleCancelSubscription = async () => {
+    if (!selectedSubId) return
+    reset()
+    setSaving(true)
+    const result = await adminUpdateSubscriptionStatus(selectedSubId, "cancelled")
+    setSaving(false)
+    setShowCancelConfirm(false)
+    if (result.error) { setError(result.error); return }
+    setSuccess("Subscription cancelled — it will no longer appear on the delivery route.")
+    setActiveSubs(prev => {
+      const remaining = prev.filter(s => s.id !== selectedSubId)
+      if (remaining.length > 0) selectSub(remaining[0])
+      else setSelectedSubId(null)
+      return remaining
+    })
+  }
+
   const tabs: { id: EditTab; label: string; icon: React.ReactNode }[] = [
-    { id: "profile",          label: "Profile",          icon: <Save className="h-3.5 w-3.5" /> },
-    { id: "add_order",        label: "Add Delivery",     icon: <ShoppingBag className="h-3.5 w-3.5" /> },
-    { id: "add_subscription", label: "Add Subscription", icon: <Repeat className="h-3.5 w-3.5" /> },
+    { id: "profile",             label: "Profile",             icon: <Save className="h-3.5 w-3.5" /> },
+    { id: "add_order",           label: "Add Delivery",        icon: <ShoppingBag className="h-3.5 w-3.5" /> },
+    { id: "add_subscription",    label: "Add Subscription",    icon: <Repeat className="h-3.5 w-3.5" /> },
+    { id: "manage_subscription", label: "Manage Subscription", icon: <Settings className="h-3.5 w-3.5" /> },
   ]
 
   return (
@@ -239,7 +322,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Phone</label>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Phone <span className="font-normal text-muted-foreground/70">(optional)</span></label>
                   <input
                     value={profile.phone}
                     onChange={handlePhoneChange}
@@ -251,7 +334,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Email</label>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Email <span className="font-normal text-muted-foreground/70">(optional)</span></label>
                   <input value={profile.email} onChange={e => setProfileField("email", e.target.value)} type="email"
                     className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C9885]" />
                 </div>
@@ -414,6 +497,141 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
                 {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Repeat className="h-4 w-4" />}
                 Create Subscription
               </button>
+            </div>
+          )}
+
+          {/* ── Manage Subscription tab (edit items/day, or cancel) ─────── */}
+          {activeTab === "manage_subscription" && (
+            <div className="space-y-4">
+              {subsLoading ? (
+                <div className="flex items-center justify-center py-8 text-muted-foreground">
+                  <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Loading subscription…
+                </div>
+              ) : activeSubs.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
+                  This customer has no active subscription. Use the &quot;Add Subscription&quot; tab to create one.
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Edit this customer&apos;s recurring weekly items and delivery day, or cancel the subscription entirely.
+                  </p>
+
+                  {/* Selector, only shown if the customer has more than one active subscription */}
+                  {activeSubs.length > 1 && (
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-muted-foreground">Subscription</label>
+                      <div className="flex flex-wrap gap-2">
+                        {activeSubs.map(sub => (
+                          <button
+                            key={sub.id}
+                            type="button"
+                            onClick={() => { selectSub(sub); reset() }}
+                            className={`cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition-all ${
+                              selectedSubId === sub.id
+                                ? "border-[#7C9885] bg-[#7C9885]/10 text-[#7C9885]"
+                                : "border-border text-muted-foreground hover:border-[#7C9885]/50"
+                            }`}
+                          >
+                            {sub.delivery_day}s · {sub.items.length} item{sub.items.length === 1 ? "" : "s"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Delivery day */}
+                  <div>
+                    <label className="mb-2 block text-xs font-medium text-muted-foreground">Delivery Day</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["thursday", "friday"] as const).map(day => (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => setManageDeliveryDay(day)}
+                          className={`cursor-pointer rounded-lg border-2 p-3 text-sm font-medium capitalize transition-all ${
+                            manageDeliveryDay === day
+                              ? "border-[#7C9885] bg-[#7C9885]/10 text-[#7C9885]"
+                              : "border-border hover:border-[#7C9885]/50"
+                          }`}
+                        >
+                          {day}s
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Weekly items */}
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground">Weekly Items</label>
+                      <button onClick={() => addItem(setManageItems)}
+                        className="cursor-pointer flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-[#7C9885] hover:bg-[#7C9885]/10 transition-colors">
+                        <Plus className="h-3 w-3" /> Add item
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {manageItems.map((item, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <select value={item.product_name} onChange={e => setItemField(setManageItems, i, "product_name", e.target.value)}
+                            className="flex-1 cursor-pointer rounded-lg border border-border bg-background px-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C9885]">
+                            {PRODUCT_OPTIONS.map(o => <option key={o.value} value={o.name}>{o.label}</option>)}
+                          </select>
+                          <input type="number" min={1} max={20} value={item.quantity}
+                            onChange={e => setItemField(setManageItems, i, "quantity", parseInt(e.target.value) || 1)}
+                            className="w-16 rounded-lg border border-border bg-background px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#7C9885]" />
+                          {manageItems.length > 1 && (
+                            <button onClick={() => removeItem(setManageItems, i)} className="cursor-pointer rounded-md p-1 hover:bg-red-50 transition-colors">
+                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button onClick={handleSaveSubscription} disabled={saving}
+                    className="cursor-pointer flex w-full items-center justify-center gap-2 rounded-lg bg-[#7C9885] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#6a8673] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                    {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Save Subscription Changes
+                  </button>
+
+                  {/* Cancel subscription */}
+                  <div className="border-t border-border pt-4">
+                    {!showCancelConfirm ? (
+                      <button
+                        onClick={() => setShowCancelConfirm(true)}
+                        className="cursor-pointer flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 px-5 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        <X className="h-4 w-4" /> Cancel This Subscription
+                      </button>
+                    ) : (
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-4 space-y-3">
+                        <p className="flex items-start gap-2 text-sm text-red-800">
+                          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                          This stops the customer from appearing on the weekly delivery route going forward. This can&apos;t be undone from here — you&apos;d need to create a new subscription to restart it.
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={handleCancelSubscription}
+                            disabled={saving}
+                            className="cursor-pointer rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50 transition-colors"
+                          >
+                            {saving ? "Cancelling…" : "Yes, Cancel Subscription"}
+                          </button>
+                          <button
+                            onClick={() => setShowCancelConfirm(false)}
+                            disabled={saving}
+                            className="cursor-pointer rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary transition-colors"
+                          >
+                            Keep Subscription
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
