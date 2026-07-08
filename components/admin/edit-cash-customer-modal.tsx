@@ -549,13 +549,18 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
                           key={day}
                           type="button"
                           onClick={() => setManageDeliveryDay(day)}
-                          className={`cursor-pointer rounded-lg border-2 p-3 text-sm font-medium capitalize transition-all ${
+                          className={`cursor-pointer rounded-lg border-2 p-3 text-left transition-all ${
                             manageDeliveryDay === day
-                              ? "border-[#7C9885] bg-[#7C9885]/10 text-[#7C9885]"
+                              ? "border-[#7C9885] bg-[#7C9885]/10"
                               : "border-border hover:border-[#7C9885]/50"
                           }`}
                         >
-                          {day}s
+                          <p className={`text-sm font-medium capitalize ${manageDeliveryDay === day ? "text-[#7C9885]" : "text-foreground"}`}>
+                            {day}s
+                          </p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Next: {formatStartDate(computeNextDeliveryDate(day))}
+                          </p>
                         </button>
                       ))}
                     </div>
