@@ -258,33 +258,37 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
   ]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl">
+    <>
+      <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+        <div
+          onClick={e => e.stopPropagation()}
+          className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl"
+        >
 
         {/* Header */}
-        <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card px-5 py-4">
-          <div>
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
+          <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Banknote className="h-5 w-5 text-[#7C9885]" />
-              <h2 className="font-serif text-lg font-medium">
+              <Banknote className="h-5 w-5 shrink-0 text-[#7C9885]" />
+              <h2 className="truncate font-serif text-lg font-medium">
                 {[customer.first_name, customer.last_name].filter(Boolean).join(" ") || "Cash Customer"}
               </h2>
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">Cash customer · Edit profile or add orders</p>
           </div>
-          <button onClick={onClose} className="cursor-pointer rounded-md p-1 hover:bg-secondary transition-colors">
+          <button onClick={onClose} className="cursor-pointer shrink-0 rounded-md p-1 hover:bg-secondary transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Tab nav */}
-        <div className="flex gap-1 border-b border-border bg-secondary/30 px-4 pt-2">
+        {/* Tab nav — horizontally scrollable so it never wraps/cramps on narrow screens */}
+        <div className="flex gap-1 overflow-x-auto border-b border-border bg-secondary/30 px-4 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabs.map(t => (
             <button
               key={t.id}
               onClick={() => { setActiveTab(t.id); reset() }}
-              className={`cursor-pointer flex items-center gap-1.5 rounded-t-lg border border-b-0 px-3 py-2 text-xs font-medium transition-all ${
+              className={`cursor-pointer flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t-lg border border-b-0 px-3 py-2 text-xs font-medium transition-all ${
                 activeTab === t.id
                   ? "border-border bg-card text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -295,7 +299,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
           ))}
         </div>
 
-        <div className="space-y-4 p-5">
+        <div className="space-y-4 p-4 sm:p-5">
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
           )}
@@ -616,7 +620,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
                           <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                           This stops the customer from appearing on the weekly delivery route going forward. This can&apos;t be undone from here — you&apos;d need to create a new subscription to restart it.
                         </p>
-                        <div className="flex gap-2">
+                        <div className="flex flex-col gap-2 sm:flex-row">
                           <button
                             onClick={handleCancelSubscription}
                             disabled={saving}
@@ -640,7 +644,8 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
             </div>
           )}
         </div>
+        </div>
       </div>
-    </div>
+    </>
   )
 }

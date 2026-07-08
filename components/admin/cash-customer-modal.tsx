@@ -131,20 +131,24 @@ export function CashCustomerModal({ onClose, onCreated }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl">
-        <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card px-5 py-4">
-          <div className="flex items-center gap-2">
-            <Banknote className={`h-5 w-5 ${customerType === "subscription" ? "text-[#7C9885]" : "text-[#5A81A5]"}`} />
-            <h2 className="font-serif text-lg font-medium">Add Cash Customer</h2>
+    <>
+      <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+        <div
+          onClick={e => e.stopPropagation()}
+          className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl"
+        >
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
+          <div className="flex items-center gap-2 min-w-0">
+            <Banknote className={`h-5 w-5 shrink-0 ${customerType === "subscription" ? "text-[#7C9885]" : "text-[#5A81A5]"}`} />
+            <h2 className="truncate font-serif text-lg font-medium">Add Cash Customer</h2>
           </div>
-          <button onClick={onClose} className="cursor-pointer rounded-md p-1 hover:bg-secondary transition-colors">
+          <button onClick={onClose} className="cursor-pointer shrink-0 rounded-md p-1 hover:bg-secondary transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="space-y-5 p-4 sm:p-5">
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
           )}
@@ -325,12 +329,12 @@ export function CashCustomerModal({ onClose, onCreated }: Props) {
           })()}
         </div>
 
-        <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-border bg-card px-5 py-4">
-          <button onClick={onClose} className="cursor-pointer rounded-lg border border-border px-4 py-2 text-sm hover:bg-secondary transition-colors">
+        <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-5 sm:py-4">
+          <button onClick={onClose} className="cursor-pointer w-full rounded-lg border border-border px-4 py-2 text-sm hover:bg-secondary transition-colors sm:w-auto">
             Cancel
           </button>
           <button onClick={handleSubmit} disabled={saving}
-            className={`cursor-pointer flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+            className={`cursor-pointer flex w-full items-center justify-center gap-2 rounded-lg px-5 py-2 text-sm font-medium text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors sm:w-auto ${
               customerType === "subscription"
                 ? "bg-[#7C9885] hover:bg-[#6a8673]"
                 : "bg-[#5A81A5] hover:bg-[#4a6f92]"
@@ -339,7 +343,8 @@ export function CashCustomerModal({ onClose, onCreated }: Props) {
             {customerType === "subscription" ? "Add Subscription Customer" : "Add One-Time Purchase"}
           </button>
         </div>
+        </div>
       </div>
-    </div>
+    </>
   )
 }
