@@ -1,54 +1,85 @@
-// app/checkout/page.tsx
+//app/checkout/success/page.tsx
 
+import { redirect } from "next/navigation"
 import { Header } from "@/components/header"
 import { Footer } from "@/components/footer"
-import { CheckoutPageClient } from "@/components/checkout-page-client"
-import { createClient } from "@/lib/supabase/server"
+import { Button } from "@/components/ui/button"
+import { CheckCircle } from "lucide-react"
+import Link from "next/link"
+import { saveOrderFromSession } from "@/app/actions/stripe"
+import { ClearCartOnSuccess } from "./clear-cart"
 
-export default async function CheckoutPage() {
-  const supabase = await createClient()
+type SearchParams = Promise<{
+  session_id?: string | string[]
+  phase?: string | string[]
+}>
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+export default async function CheckoutSuccessPage({
+  searchParams,
+}: {
+  searchParams: SearchParams
+}) {
+  const params = await searchParams
+  const sessionId =
+    typeof params.session_id === "string" ? params.session_id : null
+  const phase =
+    typeof params.phase === "string" ? params.phase : null
 
-  let userId: string | null = null
-  let initialAddress = undefined
-
-  if (user) {
-    userId = user.id
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("first_name, last_name, phone, address, city, state, zip, delivery_instructions")
-      .eq("id", user.id)
-      .maybeSingle()
-
-    if (profile) {
-      initialAddress = {
-        firstName: profile.first_name || "",
-        lastName: profile.last_name || "",
-        phone: profile.phone || "",
-        address: profile.address || "",
-        city: profile.city || "",
-        state: profile.state || "NY",
-        zip: profile.zip || "",
-        deliveryInstructions: profile.delivery_instructions || "",
-      }
-    }
+  // Always save the order for this session on the server (auth cookies available here)
+  let orderCode: string | null = null
+  if (sessionId) {
+    const result = await saveOrderFromSession(sessionId)
+    orderCode = result?.orderCode ?? null
   }
 
+  // Mid-flow: this was phase 1 (subscription) of a mixed cart.
+  // Redirect back to /checkout to complete the one-time purchase.
+  // The cart is NOT cleared here — one-time items are still needed.
+  if (phase === "subscription") {
+    redirect("/checkout?returning_from_phase=subscription")
+  }
+
+  // Final success: all payments complete — clear cart and show confirmation.
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
-      <main className="flex-1 bg-secondary/30">
-        <div className="mx-auto max-w-6xl px-4 py-12 md:px-6">
-          <h1 className="mb-8 font-serif text-3xl font-medium text-foreground md:text-4xl">
-            Checkout
+      <ClearCartOnSuccess sessionId={sessionId} />
+
+      <main className="flex flex-1 items-center justify-center bg-secondary/30 px-4 py-16">
+        <div className="mx-auto max-w-md text-center">
+          <div className="mb-6 inline-flex h-20 w-20 items-center justify-center rounded-full bg-sage/10">
+            <CheckCircle className="h-10 w-10 text-sage" />
+          </div>
+
+          <h1 className="mb-4 font-serif text-3xl font-medium text-foreground">
+            Thank You!
           </h1>
-          <CheckoutPageClient userId={userId} initialAddress={initialAddress} />
+
+          <p className="mb-2 text-muted-foreground">
+            Your order has been confirmed and will be prepared fresh for delivery.
+          </p>
+
+          <p className="mb-8 text-sm text-muted-foreground">
+            You&apos;ll receive an email confirmation shortly with your order details.
+          </p>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+            <Button asChild>
+              <Link href="/account">View your account</Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href="/">Return home</Link>
+            </Button>
+          </div>
+
+          {orderCode && (
+            <p className="mt-8 text-xs text-muted-foreground">
+              Order #: {orderCode}
+            </p>
+          )}
         </div>
       </main>
+
       <Footer />
     </div>
   )
