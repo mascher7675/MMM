@@ -379,12 +379,12 @@ export async function saveOrderFromSession(sessionId: string) {
     // Idempotency — don't double-save if the success page is revisited
     const { data: existingOrder } = await supabase
       .from("orders")
-      .select("id")
+      .select("id, order_code")
       .eq("stripe_session_id", sessionId)
       .maybeSingle()
 
     if (existingOrder) {
-      return { error: null, orderId: existingOrder.id }
+      return { error: null, orderId: existingOrder.id, orderCode: existingOrder.order_code ?? null }
     }
 
     // Parse metadata
@@ -634,7 +634,7 @@ export async function saveOrderFromSession(sessionId: string) {
       }
     }
 
-    return { error: null, orderId: order.id }
+    return { error: null, orderId: order.id, orderCode: order.order_code ?? null }
   } catch (e) {
     console.error("Error in saveOrderFromSession:", e)
     return {
