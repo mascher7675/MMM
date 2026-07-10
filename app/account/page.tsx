@@ -24,7 +24,11 @@ export default async function AccountPage() {
     .eq("id", user.id)
     .maybeSingle()
 
-  // Fetch ALL of the user's subscriptions with items
+  // Fetch ALL of the user's subscriptions with items.
+  // Ordered oldest-first (ascending) so the original subscription always
+  // stays "Subscription 1" in the account dashboard, and newly-added
+  // subscriptions are appended after it as 2, 3, etc. — instead of the
+  // newest one jumping to the top and bumping everything else down.
   const { data: subscriptionsRaw } = await supabase
     .from("subscriptions")
     .select(`
@@ -32,7 +36,7 @@ export default async function AccountPage() {
       subscription_items (*)
     `)
     .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
+    .order("created_at", { ascending: true })
 
   // Normalize so subscription_items is always an array and each subscription shape is consistent
   const subscriptions = (subscriptionsRaw ?? []).map((sub) => ({
