@@ -98,7 +98,6 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
       <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;color:#3a5a7a;line-height:1.6;margin:0;">
         You can skip a delivery, change your milk, or manage your subscription anytime from your
         <a href="${process.env.NEXT_PUBLIC_APP_URL ?? 'https://modernmilkmaid.com'}/account" style="color:#5A81A5;text-decoration:underline;">account page</a>.
-        Skips must be requested by Wednesday at 5 PM for Thursday deliveries, or Thursday at 5 PM for Friday deliveries.
       </p>
     </div>
   ` : ""
@@ -568,72 +567,62 @@ export async function sendContactNotificationEmail(data: ContactNotificationData
       html: `
         <!DOCTYPE html>
         <html>
-          <head>
-            <meta charset="utf-8">
-            <style>
-              body {
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-                line-height: 1.6;
-                color: #333;
-                max-width: 600px;
-                margin: 0 auto;
-                padding: 20px;
-              }
-              .header {
-                text-align: center;
-                padding: 24px 0;
-                border-bottom: 2px solid #85B972;
-              }
-              .header h1 {
-                margin: 0;
-                color: #85B972;
-                font-size: 24px;
-              }
-              .content { padding: 24px 0; }
-              .label {
-                font-size: 12px;
-                text-transform: uppercase;
-                letter-spacing: 1px;
-                color: #888;
-                margin-bottom: 2px;
-              }
-              .field {
-                background: #f9f9f9;
-                border-radius: 6px;
-                padding: 12px 16px;
-                margin-bottom: 16px;
-                font-size: 15px;
-              }
-              .message-body { white-space: pre-wrap; }
-              .footer {
-                text-align: center;
-                padding: 24px 0 0;
-                border-top: 1px solid #ddd;
-                color: #999;
-                font-size: 13px;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>Modern Milk Maid</h1>
-              <p style="color:#666; font-size:13px; margin:4px 0 0;">New contact form submission</p>
-            </div>
-            <div class="content">
-              <p class="label">Name</p>
-              <div class="field">${data.name}</div>
-              <p class="label">Email</p>
-              <div class="field"><a href="mailto:${data.email}" style="color:#85B972;">${data.email}</a></div>
-              <p class="label">Phone</p>
-              <div class="field">${data.phone}</div>
-              <p class="label">Message</p>
-              <div class="field message-body">${data.message}</div>
-              <p style="font-size:13px; color:#666;">
-                You can reply directly to this email to respond to ${data.name}.
-              </p>
-            </div>
-            <div class="footer">
-              <p>Modern Milk Maid · North Fork, Long Island, NY</p>
+          <head><meta charset="utf-8"></head>
+          <body style="margin:0;padding:0;background:#e8e3db;">
+            <div style="max-width:600px;margin:0 auto;background:#FAF7F2;border-radius:4px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+              <!-- Header -->
+              <div style="background:#2C3E2D;padding:44px 48px 36px;text-align:center;">
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:4px;color:#85B972;text-transform:uppercase;margin-bottom:12px;">North Fork, Long Island</div>
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:34px;font-weight:normal;color:#FAF7F2;letter-spacing:1px;line-height:1.1;">Modern Milk Maid</div>
+                <div style="margin-top:16px;display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+                <span style="font-family:Georgia,serif;font-size:18px;color:#85B972;margin:0 12px;">&#10023;</span>
+                <div style="display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+                <div style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#a8bfab;letter-spacing:2px;text-transform:uppercase;margin-top:14px;">Fresh Plant-Based Milks</div>
+              </div>
+
+              <!-- Banner -->
+              <div style="background:#85B972;padding:16px 48px;text-align:center;">
+                <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#ffffff;letter-spacing:0.5px;">&#10023; &nbsp;New contact form submission</span>
+              </div>
+
+              <!-- Body -->
+              <div style="padding:44px 48px;">
+                <p style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#2C3E2D;margin:0 0 8px;">New message from ${data.name}</p>
+                <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;color:#5a5a4e;line-height:1.7;margin:0 0 36px;">Someone reached out through the website contact form. Their details are below &mdash; you can reply directly to this email to respond.</p>
+
+                <!-- Fields -->
+                <div style="margin-bottom:24px;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:6px;">Name</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;padding-bottom:18px;border-bottom:1px solid #EDE8DF;">${data.name}</div>
+                </div>
+
+                <div style="margin-bottom:24px;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:6px;">Email</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;padding-bottom:18px;border-bottom:1px solid #EDE8DF;"><a href="mailto:${data.email}" style="color:#5A81A5;text-decoration:none;">${data.email}</a></div>
+                </div>
+
+                <div style="margin-bottom:24px;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:6px;">Phone</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;padding-bottom:18px;border-bottom:1px solid #EDE8DF;">${data.phone}</div>
+                </div>
+
+                <div style="margin-bottom:8px;">
+                  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:10px;">Message</div>
+                  <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;line-height:1.7;white-space:pre-wrap;background:#F0EBE2;border-radius:4px;padding:20px 24px;">${data.message}</div>
+                </div>
+
+                <!-- Reply note -->
+                <div style="margin-top:44px;padding-top:32px;border-top:1px solid #EDE8DF;">
+                  <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#5a5a4e;line-height:1.7;margin:0;">Reply directly to this email to respond to ${data.name}.</p>
+                </div>
+              </div>
+
+              <!-- Footer -->
+              <div style="background:#2C3E2D;padding:28px 48px;text-align:center;">
+                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#85B972;">Modern Milk Maid &nbsp;&middot;&nbsp; North Fork, Long Island, NY</div>
+              </div>
+
             </div>
           </body>
         </html>

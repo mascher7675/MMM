@@ -325,6 +325,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
         const isCancelling       = cancelLoading.has(order.id)
         const cancelRes          = cancelResult[order.id]
         const hasStripePayment   = !!order.stripe_payment_intent_id
+        const isCash             = order.is_cash_customer === true
         const showCancelButton   = !isSubscription && !isCancelled && !isOrphaned && !isSkipped
 
         const isConfirmingRefund = refundConfirm.has(order.id)
@@ -667,10 +668,12 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                     <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                       Refund This Delivery
                     </p>
-                    <p className="mb-2 text-xs text-muted-foreground">
-                      Refunds just this week&apos;s charge (e.g. customer wasn&apos;t home to receive it) — the
-                      subscription itself keeps running for future weeks.
-                    </p>
+                    {!isCash && (
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        Refunds just this week&apos;s charge (e.g. customer wasn&apos;t home to receive it) — the
+                        subscription itself keeps running for future weeks.
+                      </p>
+                    )}
                     {refundRes && !refundRes.error && (
                       <div className="mb-2 flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300">
                         <Check className="h-3.5 w-3.5 shrink-0" />
@@ -682,7 +685,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                         Error: {refundRes.error}
                       </div>
                     )}
-                    {!isConfirmingRefund && !refundRes && hasStripePayment && (
+                    {!isConfirmingRefund && !refundRes && !isCash && hasStripePayment && (
                       <button
                         onClick={() => requestRefundConfirm(order.id)}
                         disabled={isRefunding}
@@ -692,11 +695,16 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                         Refund This Delivery
                       </button>
                     )}
-                    {!isConfirmingRefund && !refundRes && !hasStripePayment && (
+                    {!isConfirmingRefund && !refundRes && !isCash && !hasStripePayment && (
                       <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
                         No payment on record for this delivery yet — Stripe charges the card a few hours before
                         delivery. Check back once it&apos;s been charged, or refund manually via Stripe if needed
                         right away.
+                      </div>
+                    )}
+                    {!isConfirmingRefund && !refundRes && isCash && (
+                      <div className="rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+                        Cash order — nothing to refund online.
                       </div>
                     )}
                     {isRefunding && (

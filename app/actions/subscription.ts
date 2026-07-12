@@ -10,6 +10,7 @@ import {
   computeDeliveryDates,
   isSkipLocked,
   isDeliveryDayChangeLocked,
+  cutoffUnixForDeliveryDate,
 } from "@/lib/delivery-utils"
 import { PRODUCTS } from "@/lib/products"
 import { sendMessage } from "@/app/actions/messages"
@@ -32,19 +33,18 @@ function toLocalDateISO(d: Date): string {
   return `${yyyy}-${mm}-${dd}`
 }
 
-// 5 PM EST expressed in UTC — same convention used at signup
-// (app/actions/stripe.ts) and in the webhook (app/api/stripe/webhook/route.ts).
-const CUTOFF_HOUR_UTC = 22
-
 /**
- * The cutoff (5 PM EST the evening before) gating the NEXT delivery on the
- * given day. Used to reschedule Stripe's billing cycle when a customer
+ * The cutoff (5 PM Eastern the evening before) gating the NEXT delivery on
+ * the given day. Used to reschedule Stripe's billing cycle when a customer
  * changes their delivery day — see updateDeliveryDay below.
+ *
+ * DST-safe: delegates to cutoffUnixForDeliveryDate in lib/delivery-utils.ts,
+ * which uses the real America/New_York UTC offset for the given date
+ * instead of assuming fixed EST (UTC-5) year-round.
  */
 function computeCutoffUnixForNextDelivery(deliveryDay: "thursday" | "friday"): number {
   const nextDelivery = computeNextDeliveryDate(deliveryDay)
-  const [y, m, d] = nextDelivery.split("-").map(Number)
-  return Math.floor(Date.UTC(y, m - 1, d - 1, CUTOFF_HOUR_UTC, 0, 0) / 1000)
+  return cutoffUnixForDeliveryDate(nextDelivery)
 }
 
 // ---------------------------------------------------------------------------
@@ -288,13 +288,14 @@ export async function unskipWeeklyDelivery(
 }
 
 /**
- * The cutoff (5 PM EST the evening before) for a specific delivery date —
+ * The cutoff (5 PM Eastern the evening before) for a specific delivery date —
  * used by cancelSubscriptionAtPeriodEnd to determine whether an
  * already-charged upcoming delivery is still refundable or already locked in.
+ *
+ * DST-safe: delegates to cutoffUnixForDeliveryDate in lib/delivery-utils.ts.
  */
 function cutoffUnixForDelivery(deliveryDateStr: string): number {
-  const [y, m, d] = deliveryDateStr.split("-").map(Number)
-  return Math.floor(Date.UTC(y, m - 1, d - 1, CUTOFF_HOUR_UTC, 0, 0) / 1000)
+  return cutoffUnixForDeliveryDate(deliveryDateStr)
 }
 
 // ---------------------------------------------------------------------------

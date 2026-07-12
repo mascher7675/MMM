@@ -209,3 +209,110 @@ export function isDeliveryDayChangeLocked(): boolean {
 
   return false
 }
+
+// ---------------------------------------------------------------------------
+// Shared Stripe cutoff timestamp helpers — DST-safe (added: strictly-Eastern
+// fix).
+//
+// PROBLEM this replaces: app/actions/stripe.ts, app/actions/subscription.ts,
+// and app/api/stripe/webhook/route.ts each independently declared their own
+// `const CUTOFF_HOUR_UTC = 22` and did `Date.UTC(y, m-1, d, 22, 0, 0)` to
+// mean "5 PM Eastern." That's only correct for EST (UTC-5), i.e. roughly
+// early November through mid-March. For the rest of the year — including
+// most of the delivery season — Eastern is EDT (UTC-4), so 5 PM ET is
+// actually 21:00 UTC, not 22:00. Every cutoff computed with the old
+// constant during EDT was silently an hour late (locking skips/cancels an
+// hour after customers actually expected, and billing renewals an hour off
+// from the advertised 5 PM).
+//
+// FIX: since this business serves Eastern-time customers exclusively, every
+// cutoff should be computed by asking what UTC instant corresponds to 5 PM
+// *wall-clock* time in America/New_York on the relevant date — using the
+// Intl API (same mechanism nowInEST() already uses above) rather than a
+// fixed offset. This automatically tracks DST transitions with no manual
+// table to maintain.
+// ---------------------------------------------------------------------------
+
+/**
+ * Converts a specific Eastern Time wall-clock moment (year/month/day/hour)
+ * into a UTC Unix timestamp (seconds), correctly accounting for whether
+ * that date falls in EST or EDT.
+ *
+ * Implementation: guess the UTC instant assuming EST (UTC-5), then check
+ * what Eastern wall-clock time that guess actually lands on. If we're
+ * really in EDT, the guess will be off by exactly one hour — correct for
+ * that difference. A single correction pass is sufficient since the
+ * EST/EDT offset only ever differs by one hour, and 5 PM is nowhere near
+ * the ~2 AM DST transition moment, so there's no ambiguity to resolve.
+ */
+export function easternWallTimeToUnix(
+  year: number,
+  month: number, // 1-12
+  day: number,
+  hour: number,
+  minute = 0
+): number {
+  const guessMs = Date.UTC(year, month - 1, day, hour + 5, minute, 0)
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(guessMs))
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0")
+  const actualDay = get("day")
+  const actualHour = get("hour")
+  const actualMinute = get("minute")
+
+  let diffMinutes = (hour * 60 + minute) - (actualHour * 60 + actualMinute)
+  // Guard against a day rollover in the formatted result (not expected for
+  // a ±1 hour DST correction at 5 PM, but harmless to guard).
+  if (actualDay !== day) {
+    diffMinutes += actualDay > day ? -24 * 60 : 24 * 60
+  }
+
+  return Math.floor((guessMs + diffMinutes * 60 * 1000) / 1000)
+}
+
+/**
+ * The cutoff (5 PM Eastern, the evening before) for a given delivery date,
+ * as a Unix timestamp in seconds. DST-safe.
+ *
+ * This is THE single source of truth for "what UTC instant is 5 PM Eastern
+ * the evening before delivery date D" — use this everywhere instead of
+ * hand-rolled Date.UTC(..., 22, ...) math.
+ */
+export function cutoffUnixForDeliveryDate(deliveryDateStr: string): number {
+  const [y, m, d] = deliveryDateStr.split("-").map(Number)
+  // Evening BEFORE the delivery date — JS Date normalizes day underflow
+  // (e.g. day 0 rolls back into the previous month) regardless of time zone.
+  const dayBefore = new Date(y, m - 1, d - 1)
+  return easternWallTimeToUnix(
+    dayBefore.getFullYear(),
+    dayBefore.getMonth() + 1,
+    dayBefore.getDate(),
+    17,
+    0
+  )
+}
+
+/**
+ * Converts a Unix timestamp (seconds) to its calendar date (YYYY-MM-DD) in
+ * Eastern Time. DST-safe — replaces the old unixToESTDateStr() in the
+ * webhook, which assumed a fixed UTC-5 offset.
+ */
+export function easternDateStrFromUnix(unixTs: number): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(unixTs * 1000))
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00"
+  return `${get("year")}-${get("month")}-${get("day")}`
+}

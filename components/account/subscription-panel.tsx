@@ -932,10 +932,9 @@ function SingleSubscriptionCard({
               <AlertDialogHeader>
                 <AlertDialogTitle>Cancel your subscription?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  If your next delivery&apos;s cutoff (5 PM the evening before) hasn&apos;t passed yet,
-                  cancelling now refunds that charge and nothing ships. If it has already passed, that
-                  delivery is locked in and will still go out. Either way, you won&apos;t be charged again.
-                  If you only want to skip a week or two instead, use &ldquo;Skip a Delivery&rdquo; above.
+                  You won&apos;t be charged again. If your next delivery is already past its 5PM cutoff (the evening before your delivery),
+                  it is still scheduled to deliver. If not, your charge is refunded. Just need a break? Use &ldquo;Skip a
+                  Delivery&rdquo; above instead.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

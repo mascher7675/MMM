@@ -4,7 +4,7 @@
 
 import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
-import { sendRefundRequestConfirmationEmail } from "@/lib/email"
+import { sendRefundRequestConfirmationEmail, sendContactNotificationEmail } from "@/lib/email"
 
 export async function sendMessage({
   type,
@@ -52,6 +52,21 @@ export async function sendMessage({
     })
 
     if (insertError) return { error: insertError.message }
+
+    // Best-effort admin notification for contact messages. A failure here
+    // must not fail the submission — the message row is already saved.
+    if (type === "contact") {
+      try {
+        await sendContactNotificationEmail({
+          name: customerName,
+          email: customerEmail,
+          phone: customerPhone || "Not provided",
+          message: body,
+        })
+      } catch (emailErr) {
+        console.error("[sendMessage] Failed to send contact notification email:", emailErr)
+      }
+    }
 
     revalidatePath("/account")
     return { error: null }
