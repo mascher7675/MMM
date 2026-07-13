@@ -3,7 +3,7 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { ChevronDown, ChevronUp, Mail, SkipForward, PlayCircle, ExternalLink, X } from "lucide-react"
+import { ChevronDown, ChevronUp, Mail, SkipForward, PlayCircle, ExternalLink, X, ChevronLeft, ChevronRight } from "lucide-react"
 import {
   adminSkipWeeklyDelivery,
   adminUnskipWeeklyDelivery,
@@ -176,6 +176,8 @@ export function SubscriptionsTab({ subscriptions }: Props) {
   const [skipModalSubId, setSkipModalSubId] = useState<string | null>(null)
   const [, startTransition] = useTransition()
   const [filter, setFilter] = useState("all")
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 20
 
   const toggle = (id: string) => {
     const next = new Set(expanded)
@@ -183,9 +185,15 @@ export function SubscriptionsTab({ subscriptions }: Props) {
     setExpanded(next)
   }
 
+  const changeFilter = (f: string) => { setFilter(f); setPage(1) }
+
   const filtered = filter === "all"
     ? subscriptions
     : subscriptions.filter((s) => s.status === filter)
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
 
   const skipModalSub = subscriptions.find((s) => s.id === skipModalSubId) ?? null
 
@@ -209,7 +217,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
         {["all", "active", "cancelled"].map((f) => (
           <button
             key={f}
-            onClick={() => setFilter(f)}
+            onClick={() => changeFilter(f)}
             className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors capitalize cursor-pointer ${
               filter === f
                 ? "bg-card text-foreground shadow-sm"
@@ -225,7 +233,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
         <p className="text-sm text-muted-foreground py-6 text-center">No subscriptions found.</p>
       )}
 
-      {filtered.map((sub) => {
+      {paginated.map((sub) => {
         const isOpen = expanded.has(sub.id)
         const skippedDates = (sub.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
         const hasSkips = skippedDates.length > 0
@@ -234,7 +242,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
           <div key={sub.id} className="rounded-lg border border-border bg-card overflow-hidden">
             <button
               onClick={() => toggle(sub.id)}
-              className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-secondary/40"
+              className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors hover:bg-secondary/40"
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -404,6 +412,38 @@ export function SubscriptionsTab({ subscriptions }: Props) {
           </div>
         )
       })}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-2">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40 disabled:cursor-default"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" /> Prev
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={`h-8 min-w-8 cursor-pointer rounded-md border px-2 text-xs font-medium transition-colors ${
+                n === safePage
+                  ? "border-[#7C9885] bg-[#7C9885] text-white"
+                  : "border-border bg-card text-muted-foreground hover:bg-secondary"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40 disabled:cursor-default"
+          >
+            Next <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }

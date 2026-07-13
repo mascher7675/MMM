@@ -2,7 +2,7 @@
 "use client"
 
 import { useState, useTransition, useEffect, useCallback } from "react"
-import { Plus, Phone, Pencil, Trash2, History, X, ShoppingBag, RefreshCcw, ChevronDown, ChevronUp } from "lucide-react"
+import { Plus, Phone, Pencil, Trash2, History, X, ShoppingBag, RefreshCcw, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from "lucide-react"
 import { updateCustomerRole, deleteCashCustomer, getCashCustomerHistory } from "@/app/actions/admin"
 import { fmtDate, STATUS_COLORS, DELIVERY_STATE_LABELS } from "./admin-types"
 import { CashCustomerModal } from "./cash-customer-modal"
@@ -288,6 +288,8 @@ export function CustomersTab({ customers }: Props) {
   const [historyCustomer, setHistoryCustomer] = useState<AdminCustomer | null>(null)
   const [deleteConfirmCustomer, setDeleteConfirmCustomer] = useState<AdminCustomer | null>(null)
   const [, startTransition] = useTransition()
+  const [page, setPage] = useState(1)
+  const PAGE_SIZE = 20
 
   const filtered = customers.filter(c => {
     const q = search.toLowerCase()
@@ -303,6 +305,13 @@ export function CustomersTab({ customers }: Props) {
       !c.is_cash_customer
     return matchesSearch && matchesType
   })
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+
+  const changeSearch = (v: string) => { setSearch(v); setPage(1) }
+  const changeFilterType = (f: "all" | "online" | "cash") => { setFilterType(f); setPage(1) }
 
   const cashCount = customers.filter(c => c.is_cash_customer).length
 
@@ -344,7 +353,7 @@ export function CustomersTab({ customers }: Props) {
           type="text"
           placeholder="Search by name, email or city…"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => changeSearch(e.target.value)}
           className="flex-1 min-w-50 rounded-lg border border-border bg-card px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#7C9885]"
         />
         <button
@@ -359,7 +368,7 @@ export function CustomersTab({ customers }: Props) {
       {/* Type filter */}
       <div className="flex items-center gap-2 flex-wrap">
         {(["all", "online", "cash"] as const).map(f => (
-          <button key={f} onClick={() => setFilterType(f)}
+          <button key={f} onClick={() => changeFilterType(f)}
             className={`cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               filterType === f ? "bg-[#7C9885] text-white" : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}>
@@ -387,7 +396,7 @@ export function CustomersTab({ customers }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {filtered.map((c) => (
+            {paginated.map((c) => (
               <tr key={c.id} className="hover:bg-secondary/20">
                 <td className="px-4 py-3 whitespace-nowrap">
                   <p className="font-medium">
@@ -486,6 +495,38 @@ export function CustomersTab({ customers }: Props) {
           <p className="p-8 text-center text-muted-foreground">No customers found.</p>
         )}
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 pt-2">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={safePage === 1}
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40 disabled:cursor-default"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" /> Prev
+          </button>
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              onClick={() => setPage(n)}
+              className={`h-8 min-w-8 cursor-pointer rounded-md border px-2 text-xs font-medium transition-colors ${
+                n === safePage
+                  ? "border-[#7C9885] bg-[#7C9885] text-white"
+                  : "border-border bg-card text-muted-foreground hover:bg-secondary"
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safePage === totalPages}
+            className="flex cursor-pointer items-center gap-1 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-secondary disabled:opacity-40 disabled:cursor-default"
+          >
+            Next <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
