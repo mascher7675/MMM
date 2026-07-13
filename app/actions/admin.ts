@@ -1543,7 +1543,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
 
     const { data: subs, error: subsError } = await supabase
       .from("subscriptions")
-      .select(`id, user_id, status, skipped_dates, subscription_items (product_name, size, quantity)`)
+      .select(`id, user_id, status, skipped_dates, stripe_subscription_id, subscription_items (product_name, size, quantity)`)
       .in("status", ["active"])
       .eq("delivery_day", deliveryDay)
       .eq("cancel_at_period_end", false)
@@ -1594,7 +1594,21 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
 
     ;(subs ?? [])
       .filter((s) => {
-        if (!profileMap[s.user_id]?.address) return false
+        const profile = profileMap[s.user_id]
+        if (!profile?.address) return false
+
+        // Security: only trust subscriptions that are backed by a real Stripe
+        // subscription OR belong to a verified cash customer. Without this, a
+        // technical user could insert their own row into `subscriptions` with
+        // status = 'active' (the RLS insert policy allows self-owned rows) and
+        // appear on the delivery route without ever paying. Cash customers
+        // legitimately have a null stripe_subscription_id, but the
+        // `is_cash_customer` flag is admin-only (enforced by the
+        // protect_privileged_profile_columns trigger), so it can't be spoofed.
+        const isStripeBacked = !!s.stripe_subscription_id
+        const isCashCustomer = profile?.is_cash_customer ?? false
+        if (!isStripeBacked && !isCashCustomer) return false
+
         const skipDates: string[] = (s.skipped_dates ?? []).map((d: string) =>
           d.length > 10 ? d.slice(0, 10) : d
         )
