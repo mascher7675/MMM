@@ -11,6 +11,7 @@ import {
   isSkipLocked,
   isDeliveryDayChangeLocked,
   cutoffUnixForDeliveryDate,
+  easternDateStrFromUnix,
 } from "@/lib/delivery-utils"
 import { PRODUCTS } from "@/lib/products"
 import { sendMessage } from "@/app/actions/messages"
@@ -30,6 +31,18 @@ function toLocalDateISO(d: Date): string {
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, "0")
   const dd = String(d.getDate()).padStart(2, "0")
+  return `${yyyy}-${mm}-${dd}`
+}
+
+// Adds N days to a YYYY-MM-DD date string, returning a new YYYY-MM-DD string.
+// Uses noon UTC as the anchor time so DST transitions never shift the
+// calendar date during the addition.
+function addDaysToDateStr(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T12:00:00Z")
+  d.setUTCDate(d.getUTCDate() + days)
+  const yyyy = d.getUTCFullYear()
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
+  const dd = String(d.getUTCDate()).padStart(2, "0")
   return `${yyyy}-${mm}-${dd}`
 }
 
@@ -328,6 +341,19 @@ function cutoffUnixForDelivery(deliveryDateStr: string): number {
 // consistently to cancellation regardless of when the charge happened to
 // land (signup or a later cutoff).
 // ---------------------------------------------------------------------------
+// Given a delivery date that would otherwise anchor the reactivate deadline,
+// push it out one extra week if it falls TOMORROW relative to today (ET).
+// That situation means today IS that delivery's cutoff day, hours before the
+// cutoff hour — a deadline of "today" isn't a meaningful reactivate window,
+// so give the customer a full extra cycle instead. Used by every branch of
+// cancelSubscriptionAtPeriodEnd (charged-and-refunded, locked-in-final, and
+// nothing-charged-yet) so this same-day case is handled consistently no
+// matter which cutoff branch a given cancellation falls into.
+function resolveDeadlineDeliveryDate(baseDeliveryDate: string, nowET: string): string {
+  const isTomorrow = addDaysToDateStr(nowET, 1) === baseDeliveryDate
+  return isTomorrow ? addDaysToDateStr(baseDeliveryDate, 7) : baseDeliveryDate
+}
+
 export async function cancelSubscriptionAtPeriodEnd(
   subscriptionId: string
 ): Promise<{ error: string | null; finalDeliveryDate: string | null; refunded: boolean }> {
@@ -394,14 +420,23 @@ export async function cancelSubscriptionAtPeriodEnd(
 
     let finalDeliveryDate: string | null = null
     let refunded = false
+    // Unix timestamp of the moment the subscription will actually terminate
+    // and the customer's "reactivate before" window closes. Computed by us
+    // directly from the business cutoff rules — not read from Stripe's
+    // internal period_end, which we've seen can be stale/misleading
+    // immediately after a subscription is created.
+    let reactivateDeadlineUnix: number | null = null
+    const nowET = easternDateStrFromUnix(Math.floor(Date.now() / 1000))
+    const deliveryDay = sub.delivery_day as "thursday" | "friday"
 
     if (pendingOrder) {
       const cutoffUnix = cutoffUnixForDelivery(pendingOrder.delivery_date)
       const nowUnix = Math.floor(Date.now() / 1000)
 
       if (nowUnix < cutoffUnix) {
-        // Cutoff hasn't passed yet — refund this charge and end the
-        // subscription right now. Nothing further is owed or scheduled.
+        // Cutoff hasn't passed yet — refund this charge and schedule the
+        // subscription to terminate at the deadline computed below. Nothing
+        // further is owed unless the customer reactivates first.
         if (pendingOrder.stripe_payment_intent_id) {
           try {
             const refund = await stripe.refunds.create({
@@ -427,16 +462,16 @@ export async function cancelSubscriptionAtPeriodEnd(
           }
         }
 
-        // Keep the Stripe subscription alive but scheduled to end at period
-        // end, so the customer can still reactivate before their next billing
-        // date. (Previously this did a terminal cancel, which could never be
-        // undone.) The refunded delivery's order is already marked cancelled
-        // above, so no milk ships this week and no further charge occurs
-        // unless the customer reactivates.
+        // Deadline is normally this delivery's own cutoff — the moment this
+        // refunded charge would otherwise have locked in for good. The
+        // shared helper pushes it out a week if today IS that cutoff day.
+        const deadlineDeliveryDate = resolveDeadlineDeliveryDate(pendingOrder.delivery_date, nowET)
+        reactivateDeadlineUnix = cutoffUnixForDeliveryDate(deadlineDeliveryDate)
+
         if (sub.stripe_subscription_id) {
           try {
             await stripe.subscriptions.update(sub.stripe_subscription_id, {
-              cancel_at_period_end: true,
+              cancel_at: reactivateDeadlineUnix,
             })
           } catch (cancelErr) {
             console.error("Failed to schedule subscription cancellation after refund:", cancelErr)
@@ -446,37 +481,55 @@ export async function cancelSubscriptionAtPeriodEnd(
         finalDeliveryDate = null
       } else {
         // Cutoff already passed — this delivery is locked in. Stop future
-        // charges but let this one ship as the final delivery.
+        // charges but let this one ship as the final delivery. Deadline is
+        // the cutoff of the delivery AFTER this one (the next charge that
+        // would otherwise have occurred).
+        const deadlineDeliveryDate = addDaysToDateStr(pendingOrder.delivery_date, 7)
+        reactivateDeadlineUnix = cutoffUnixForDeliveryDate(deadlineDeliveryDate)
+
         if (sub.stripe_subscription_id) {
           await stripe.subscriptions.update(sub.stripe_subscription_id, {
-            cancel_at_period_end: true,
+            cancel_at: reactivateDeadlineUnix,
           })
         }
         finalDeliveryDate = pendingOrder.delivery_date
       }
     } else if (sub.stripe_subscription_id) {
       // No pending paid delivery at all (mid-cycle, next charge hasn't
-      // happened yet) — nothing to refund, just stop future charges.
+      // happened yet — e.g. a returning week-N subscriber cancelling days
+      // before their delivery, before that delivery's charge has fired).
+      // Nothing to refund. Deadline is the cutoff of the next not-yet-
+      // charged delivery — same shared helper, since this can equally land
+      // on "today IS the cutoff day" if they cancel hours before their own
+      // charge would have fired.
+      const nextDelivery = computeNextDeliveryDate(deliveryDay)
+      const deadlineDeliveryDate = resolveDeadlineDeliveryDate(nextDelivery, nowET)
+      reactivateDeadlineUnix = cutoffUnixForDeliveryDate(deadlineDeliveryDate)
       await stripe.subscriptions.update(sub.stripe_subscription_id, {
-        cancel_at_period_end: true,
+        cancel_at: reactivateDeadlineUnix,
       })
     }
 
     await supabase
       .from("subscriptions")
       .update({
-        // Both paths (refund-before-cutoff and ship-after-cutoff) now schedule
-        // cancellation at period end and keep the row "active" until Stripe
-        // finalizes it — the customer.subscription.deleted webhook flips it to
-        // "cancelled" when the period actually ends. This keeps the
-        // subscription reactivatable until the next billing cutoff in EVERY
-        // case. final_delivery_date distinguishes the two states for the UI:
-        // null = refunded (no delivery this week); set = a paid delivery still
-        // ships. current_period_end is intentionally left unchanged — it's the
-        // reactivate deadline shown to the customer, synced from Stripe by the
-        // client if it's currently null (syncPeriodEndFromStripe).
+        // cancel_at_period_end is our own row's "cancellation is scheduled"
+        // flag for the UI — it stays true regardless of which cutoff branch
+        // fired above. The actual Stripe-side termination is now driven by
+        // the explicit cancel_at timestamp set per-branch, not by Stripe's
+        // own period boundary. status stays "active" until the
+        // customer.subscription.deleted webhook flips it to "cancelled" once
+        // that deadline arrives. final_delivery_date distinguishes the UI
+        // copy: null = refunded (no delivery this week); set = a paid
+        // delivery still ships. current_period_end now stores our
+        // deterministic reactivate deadline directly, so the banner shows
+        // the correct date immediately with no client-side Stripe sync
+        // needed.
         cancel_at_period_end: true,
         final_delivery_date: finalDeliveryDate,
+        current_period_end: reactivateDeadlineUnix
+          ? new Date(reactivateDeadlineUnix * 1000).toISOString()
+          : undefined,
         status: "active",
         updated_at: new Date().toISOString(),
       })
@@ -587,8 +640,11 @@ export async function reactivateSubscription(
     if (subError || !sub) return { error: "Subscription not found" }
 
     if (sub.stripe_subscription_id) {
+      // Cancellation was scheduled via the explicit `cancel_at` timestamp
+      // (see cancelSubscriptionAtPeriodEnd), not `cancel_at_period_end` — so
+      // undoing it means clearing `cancel_at`, not toggling that flag.
       await stripe.subscriptions.update(sub.stripe_subscription_id, {
-        cancel_at_period_end: false,
+        cancel_at: null,
       })
     }
 
@@ -597,6 +653,7 @@ export async function reactivateSubscription(
       .update({
         cancel_at_period_end: false,
         final_delivery_date: null,
+        current_period_end: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", subscriptionId)
