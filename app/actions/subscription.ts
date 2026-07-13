@@ -1,7 +1,7 @@
 //app/actions/subscription.ts
-
+ 
 "use server"
-
+ 
 import { createClient } from "@/lib/supabase/server"
 import { stripe } from "@/lib/stripe"
 import { revalidatePath } from "next/cache"
@@ -15,7 +15,8 @@ import {
 } from "@/lib/delivery-utils"
 import { PRODUCTS } from "@/lib/products"
 import { sendMessage } from "@/app/actions/messages"
-
+import { sendSubscriptionCancelledEmail } from "@/lib/email"
+ 
 // Base URL for redirects (Stripe billing portal return_url)
 function getAccountUrl(): string {
   if (typeof process.env.NEXT_PUBLIC_APP_URL === "string" && process.env.NEXT_PUBLIC_APP_URL) {
@@ -23,7 +24,7 @@ function getAccountUrl(): string {
   }
   return "http://localhost:3000/account"
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Helper: format a Date as YYYY-MM-DD using LOCAL date parts (not UTC).
 // ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ function toLocalDateISO(d: Date): string {
   const dd = String(d.getDate()).padStart(2, "0")
   return `${yyyy}-${mm}-${dd}`
 }
-
+ 
 // Adds N days to a YYYY-MM-DD date string, returning a new YYYY-MM-DD string.
 // Uses noon UTC as the anchor time so DST transitions never shift the
 // calendar date during the addition.
@@ -45,7 +46,7 @@ function addDaysToDateStr(dateStr: string, days: number): string {
   const dd = String(d.getUTCDate()).padStart(2, "0")
   return `${yyyy}-${mm}-${dd}`
 }
-
+ 
 /**
  * The cutoff (5 PM Eastern the evening before) gating the NEXT delivery on
  * the given day. Used to reschedule Stripe's billing cycle when a customer
@@ -59,7 +60,7 @@ function computeCutoffUnixForNextDelivery(deliveryDay: "thursday" | "friday"): n
   const nextDelivery = computeNextDeliveryDate(deliveryDay)
   return cutoffUnixForDeliveryDate(nextDelivery)
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Change delivery day
 //
@@ -83,7 +84,7 @@ export async function updateDeliveryDay(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated", nextDeliveryDate: null }
-
+ 
     // Reject if we're in the Wednesday 5 PM – Friday noon lock window
     if (isDeliveryDayChangeLocked()) {
       return {
@@ -91,7 +92,7 @@ export async function updateDeliveryDay(
         nextDeliveryDate: null,
       }
     }
-
+ 
     // Fetch current state, including the Stripe subscription id — required
     // to reschedule the billing cycle below.
     const { data: sub, error: fetchError } = await supabase
@@ -100,18 +101,18 @@ export async function updateDeliveryDay(
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (fetchError || !sub) return { error: "Subscription not found", nextDeliveryDate: null }
-
+ 
     const nextDeliveryDate = computeNextDeliveryDate(deliveryDay)
-
+ 
     // Compute the upcoming dates for the new delivery day
     const newDeliveryDates = computeDeliveryDates(deliveryDay)
-
+ 
     // Filter skipped_dates — remove any skips that no longer align with the new delivery day
     const skippedDates: string[] = Array.isArray(sub?.skipped_dates) ? sub.skipped_dates : []
     const newSkippedDates = skippedDates.filter((d) => newDeliveryDates.includes(d))
-
+ 
     // ── Reschedule Stripe's billing cycle to the new cutoff ─────────────────
     // Skipped entirely if the day isn't actually changing (avoids a pointless
     // trial_end update on a no-op resubmit). If the Stripe call fails, we
@@ -119,7 +120,7 @@ export async function updateDeliveryDay(
     // the change blocked than let Supabase and Stripe disagree about which
     // day is real.
     let newPeriodEnd: string | null = null
-
+ 
     if (sub.stripe_subscription_id && sub.delivery_day !== deliveryDay) {
       const newCutoffUnix = computeCutoffUnixForNextDelivery(deliveryDay)
       try {
@@ -127,7 +128,7 @@ export async function updateDeliveryDay(
           trial_end: newCutoffUnix,
           proration_behavior: "none",
         })) as unknown as { items: { data: { current_period_end: number }[] } }
-
+ 
         const periodEndUnix = updated.items?.data?.[0]?.current_period_end
         newPeriodEnd = new Date((periodEndUnix ?? newCutoffUnix) * 1000).toISOString()
       } catch (e) {
@@ -138,7 +139,7 @@ export async function updateDeliveryDay(
         }
       }
     }
-
+ 
     const { error } = await supabase
       .from("subscriptions")
       .update({
@@ -149,9 +150,9 @@ export async function updateDeliveryDay(
       })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
-
+ 
     if (error) return { error: error.message, nextDeliveryDate: null }
-
+ 
     // Best-effort cleanup: if a weekly order row was already pre-created
     // under the OLD delivery day (via the invoice.upcoming webhook, which
     // can fire a few days before the cutoff — i.e. potentially before this
@@ -172,14 +173,14 @@ export async function updateDeliveryDay(
     } catch (cleanupError) {
       console.error("Non-blocking: failed to clean up stale pre-created order after delivery day change:", cleanupError)
     }
-
+ 
     revalidatePath("/account")
     return { error: null, nextDeliveryDate }
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to update delivery day", nextDeliveryDate: null }
   }
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Skip a weekly delivery (self-service, before the 5 PM EST cutoff)
 //
@@ -195,40 +196,40 @@ export async function skipWeeklyDelivery(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated" }
-
+ 
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .select("id, status, delivery_day, skipped_dates")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) return { error: "Subscription not found" }
     if (sub.status !== "active") return { error: "Only active subscriptions can have deliveries skipped." }
-
+ 
     const deliveryDay = sub.delivery_day as "thursday" | "friday"
-
+ 
     // Validate deliveryDate is actually an upcoming delivery date for this subscription
     const upcomingDates = computeDeliveryDates(deliveryDay, 12)
     if (!upcomingDates.includes(deliveryDate)) {
       return { error: "That date is not a valid upcoming delivery date for this subscription." }
     }
-
+ 
     // Check cutoff — 5 PM EST the evening before delivery — only applies to the
     // immediate next delivery date, not future ones.
     const isNextDelivery = upcomingDates[0] === deliveryDate
     if (isNextDelivery && isSkipLocked(deliveryDay)) {
       return { error: "The skip window for this delivery has closed (cutoff: 5 PM the evening before delivery). Please contact us if you need help." }
     }
-
+ 
     const currentSkipped: string[] = Array.isArray(sub.skipped_dates) ? sub.skipped_dates : []
-
+ 
     if (currentSkipped.includes(deliveryDate)) {
       return { error: null } // Already skipped — idempotent
     }
-
+ 
     const newSkipped = [...currentSkipped, deliveryDate].sort()
-
+ 
     const { error: updateError } = await supabase
       .from("subscriptions")
       .update({
@@ -237,16 +238,16 @@ export async function skipWeeklyDelivery(
       })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
-
+ 
     if (updateError) return { error: updateError.message }
-
+ 
     revalidatePath("/account")
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to skip delivery" }
   }
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Unskip a weekly delivery (undo a skip, before the 5 PM EST cutoff)
 //
@@ -260,28 +261,28 @@ export async function unskipWeeklyDelivery(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated" }
-
+ 
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .select("id, status, delivery_day, skipped_dates")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) return { error: "Subscription not found" }
-
+ 
     const deliveryDay = sub.delivery_day as "thursday" | "friday"
-
+ 
     // Can't unskip after cutoff either — but only applies to the immediate next delivery.
     const upcomingForUnskip = computeDeliveryDates(deliveryDay, 12)
     const isNextDeliveryUnskip = upcomingForUnskip[0] === deliveryDate
     if (isNextDeliveryUnskip && isSkipLocked(deliveryDay)) {
       return { error: "The cutoff has passed for this delivery — the skip can no longer be changed. Please contact us if you need help." }
     }
-
+ 
     const currentSkipped: string[] = Array.isArray(sub.skipped_dates) ? sub.skipped_dates : []
     const newSkipped = currentSkipped.filter((d) => d !== deliveryDate)
-
+ 
     const { error: updateError } = await supabase
       .from("subscriptions")
       .update({
@@ -290,16 +291,16 @@ export async function unskipWeeklyDelivery(
       })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
-
+ 
     if (updateError) return { error: updateError.message }
-
+ 
     revalidatePath("/account")
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to unskip delivery" }
   }
 }
-
+ 
 /**
  * The cutoff (5 PM Eastern the evening before) for a specific delivery date —
  * used by cancelSubscriptionAtPeriodEnd to determine whether an
@@ -310,7 +311,7 @@ export async function unskipWeeklyDelivery(
 function cutoffUnixForDelivery(deliveryDateStr: string): number {
   return cutoffUnixForDeliveryDate(deliveryDateStr)
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Cancel subscription
 //
@@ -353,7 +354,7 @@ function resolveDeadlineDeliveryDate(baseDeliveryDate: string, nowET: string): s
   const isTomorrow = addDaysToDateStr(nowET, 1) === baseDeliveryDate
   return isTomorrow ? addDaysToDateStr(baseDeliveryDate, 7) : baseDeliveryDate
 }
-
+ 
 export async function cancelSubscriptionAtPeriodEnd(
   subscriptionId: string
 ): Promise<{ error: string | null; finalDeliveryDate: string | null; refunded: boolean }> {
@@ -363,18 +364,18 @@ export async function cancelSubscriptionAtPeriodEnd(
     if (userError || !user) {
       return { error: "Not authenticated", finalDeliveryDate: null, refunded: false }
     }
-
+ 
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .select("stripe_subscription_id, delivery_day")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) {
       return { error: "Subscription not found", finalDeliveryDate: null, refunded: false }
     }
-
+ 
     // If stripe_subscription_id is missing, look it up from Stripe using the customer ID.
     if (!sub.stripe_subscription_id) {
       const { data: profile } = await supabase
@@ -382,7 +383,7 @@ export async function cancelSubscriptionAtPeriodEnd(
         .select("stripe_customer_id")
         .eq("id", user.id)
         .single()
-
+ 
       if (profile?.stripe_customer_id) {
         const list = await stripe.subscriptions.list({
           customer: profile.stripe_customer_id,
@@ -400,7 +401,7 @@ export async function cancelSubscriptionAtPeriodEnd(
         }
       }
     }
-
+ 
     // Find the nearest upcoming, already-charged delivery — the ONLY
     // delivery that could possibly still be "pending" (charged but not yet
     // shipped). Anything earlier already happened; anything later hasn't
@@ -417,9 +418,10 @@ export async function cancelSubscriptionAtPeriodEnd(
       .order("delivery_date", { ascending: true })
       .limit(1)
       .maybeSingle()
-
+ 
     let finalDeliveryDate: string | null = null
     let refunded = false
+    let refundAmountCents: number | null = null
     // Unix timestamp of the moment the subscription will actually terminate
     // and the customer's "reactivate before" window closes. Computed by us
     // directly from the business cutoff rules — not read from Stripe's
@@ -428,11 +430,11 @@ export async function cancelSubscriptionAtPeriodEnd(
     let reactivateDeadlineUnix: number | null = null
     const nowET = easternDateStrFromUnix(Math.floor(Date.now() / 1000))
     const deliveryDay = sub.delivery_day as "thursday" | "friday"
-
+ 
     if (pendingOrder) {
       const cutoffUnix = cutoffUnixForDelivery(pendingOrder.delivery_date)
       const nowUnix = Math.floor(Date.now() / 1000)
-
+ 
       if (nowUnix < cutoffUnix) {
         // Cutoff hasn't passed yet — refund this charge and schedule the
         // subscription to terminate at the deadline computed below. Nothing
@@ -443,7 +445,7 @@ export async function cancelSubscriptionAtPeriodEnd(
               payment_intent: pendingOrder.stripe_payment_intent_id,
               reason: "requested_by_customer",
             })
-
+ 
             await supabase
               .from("orders")
               .update({
@@ -453,21 +455,22 @@ export async function cancelSubscriptionAtPeriodEnd(
                 updated_at: new Date().toISOString(),
               })
               .eq("id", pendingOrder.id)
-
+ 
             refunded = true
+            refundAmountCents = refund.amount
           } catch (refundErr) {
             console.error("Failed to refund pending delivery on cancel:", refundErr)
             // Fall through — still cancel the subscription even if the
             // refund call itself failed; this needs manual follow-up.
           }
         }
-
+ 
         // Deadline is normally this delivery's own cutoff — the moment this
         // refunded charge would otherwise have locked in for good. The
         // shared helper pushes it out a week if today IS that cutoff day.
         const deadlineDeliveryDate = resolveDeadlineDeliveryDate(pendingOrder.delivery_date, nowET)
         reactivateDeadlineUnix = cutoffUnixForDeliveryDate(deadlineDeliveryDate)
-
+ 
         if (sub.stripe_subscription_id) {
           try {
             await stripe.subscriptions.update(sub.stripe_subscription_id, {
@@ -477,7 +480,7 @@ export async function cancelSubscriptionAtPeriodEnd(
             console.error("Failed to schedule subscription cancellation after refund:", cancelErr)
           }
         }
-
+ 
         finalDeliveryDate = null
       } else {
         // Cutoff already passed — this delivery is locked in. Stop future
@@ -486,7 +489,7 @@ export async function cancelSubscriptionAtPeriodEnd(
         // would otherwise have occurred).
         const deadlineDeliveryDate = addDaysToDateStr(pendingOrder.delivery_date, 7)
         reactivateDeadlineUnix = cutoffUnixForDeliveryDate(deadlineDeliveryDate)
-
+ 
         if (sub.stripe_subscription_id) {
           await stripe.subscriptions.update(sub.stripe_subscription_id, {
             cancel_at: reactivateDeadlineUnix,
@@ -509,7 +512,7 @@ export async function cancelSubscriptionAtPeriodEnd(
         cancel_at: reactivateDeadlineUnix,
       })
     }
-
+ 
     await supabase
       .from("subscriptions")
       .update({
@@ -535,7 +538,7 @@ export async function cancelSubscriptionAtPeriodEnd(
       })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
-
+ 
     // Best-effort cleanup: cancel any OTHER future, not-yet-delivered order
     // for this subscription beyond the one we just resolved — e.g. a
     // preview order pre-created by invoice.upcoming for a delivery that
@@ -547,13 +550,50 @@ export async function cancelSubscriptionAtPeriodEnd(
         .eq("subscription_id", subscriptionId)
         .neq("status", "cancelled")
         .gte("delivery_date", todayISO)
-
+ 
       if (finalDeliveryDate) {
         cleanupQuery = cleanupQuery.neq("delivery_date", finalDeliveryDate)
       }
       await cleanupQuery
     } catch (cleanupError) {
       console.error("Non-blocking: failed to clean up future orders after cancel:", cleanupError)
+    }
+ 
+    // Best-effort confirmation email — a failure here shouldn't fail the
+    // cancellation itself, since it's already been fully processed above.
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("first_name, last_name, email")
+        .eq("id", user.id)
+        .single()
+
+      const customerEmail = profile?.email ?? user.email ?? null
+      if (customerEmail) {
+        const customerName =
+          [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") ||
+          profile?.email ||
+          user.email ||
+          "there"
+
+        const finalDeliveryDateLabel = finalDeliveryDate
+          ? new Date(finalDeliveryDate + "T12:00:00").toLocaleDateString("en-US", {
+              weekday: "long",
+              month: "long",
+              day: "numeric",
+            })
+          : null
+
+        await sendSubscriptionCancelledEmail({
+          customerEmail,
+          customerName,
+          refunded,
+          refundAmountCents,
+          finalDeliveryDateLabel,
+        })
+      }
+    } catch (emailErr) {
+      console.error("[cancelSubscriptionAtPeriodEnd] Failed to send cancellation confirmation email:", emailErr)
     }
 
     await sendMessage({
@@ -563,7 +603,7 @@ export async function cancelSubscriptionAtPeriodEnd(
         : `Customer cancelled their subscription. Final delivery date: ${finalDeliveryDate || "none — no further deliveries"}.`,
       subscriptionId,
     })
-
+ 
     revalidatePath("/account")
     return { error: null, finalDeliveryDate, refunded }
   } catch (e) {
@@ -574,7 +614,7 @@ export async function cancelSubscriptionAtPeriodEnd(
     }
   }
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Create Stripe Customer Portal session
 // ---------------------------------------------------------------------------
@@ -585,7 +625,7 @@ export async function createBillingPortalSession(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { url: null, error: "Not authenticated" }
-
+ 
     // Verify the subscription belongs to this user
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
@@ -593,9 +633,9 @@ export async function createBillingPortalSession(
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) return { url: null, error: "Subscription not found" }
-
+ 
     // stripe_customer_id lives on the profile, not the subscription
     const { data: profile } = await supabase
       .from("profiles")
@@ -603,22 +643,22 @@ export async function createBillingPortalSession(
       .eq("id", user.id)
       .single()
     const stripeCustomerId = profile?.stripe_customer_id
-
+ 
     if (!stripeCustomerId) {
       return { url: null, error: "No billing account found. Please contact support." }
     }
-
+ 
     const session = await stripe.billingPortal.sessions.create({
       customer: stripeCustomerId,
       return_url: getAccountUrl(),
     })
-
+ 
     return { url: session.url, error: null }
   } catch (e) {
     return { url: null, error: e instanceof Error ? e.message : "Failed to create billing portal session" }
   }
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Reactivate subscription (undo cancel_at_period_end)
 // ---------------------------------------------------------------------------
@@ -629,16 +669,16 @@ export async function reactivateSubscription(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated" }
-
+ 
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .select("stripe_subscription_id, cancel_at_period_end")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) return { error: "Subscription not found" }
-
+ 
     if (sub.stripe_subscription_id) {
       // Cancellation was scheduled via the explicit `cancel_at` timestamp
       // (see cancelSubscriptionAtPeriodEnd), not `cancel_at_period_end` — so
@@ -647,7 +687,7 @@ export async function reactivateSubscription(
         cancel_at: null,
       })
     }
-
+ 
     const { error } = await supabase
       .from("subscriptions")
       .update({
@@ -658,16 +698,16 @@ export async function reactivateSubscription(
       })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
-
+ 
     if (error) return { error: error.message }
-
+ 
     revalidatePath("/account")
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to reactivate subscription" }
   }
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Swap subscription milk type
 // ---------------------------------------------------------------------------
@@ -680,7 +720,7 @@ export async function swapSubscriptionMilk(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated" }
-
+ 
     // Verify subscription belongs to user
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
@@ -688,20 +728,20 @@ export async function swapSubscriptionMilk(
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) return { error: "Subscription not found" }
     if (sub.status !== "active") return { error: "Subscription is not active" }
-
+ 
     // Check milk-change lock (same 5 PM EST cutoff)
     const deliveryDay = sub.delivery_day as "thursday" | "friday"
     if (isSkipLocked(deliveryDay)) {
       return { error: "Milk type changes are locked from 5 PM the evening before delivery until noon on delivery day." }
     }
-
+ 
     // Look up the new product
     const newProduct = PRODUCTS.find((p) => p.id === newProductId)
     if (!newProduct) return { error: "Product not found" }
-
+ 
     const { error: updateError } = await supabase
       .from("subscription_items")
       .update({
@@ -713,16 +753,16 @@ export async function swapSubscriptionMilk(
       })
       .eq("id", itemId)
       .eq("subscription_id", subscriptionId)
-
+ 
     if (updateError) return { error: updateError.message }
-
+ 
     revalidatePath("/account")
     return { error: null }
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Failed to swap milk type" }
   }
 }
-
+ 
 // ---------------------------------------------------------------------------
 // Backfill current_period_end from Stripe
 // ---------------------------------------------------------------------------
@@ -733,33 +773,33 @@ export async function syncPeriodEndFromStripe(
     const supabase = await createClient()
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { current_period_end: null, error: "Not authenticated" }
-
+ 
     const { data: sub, error: subError } = await supabase
       .from("subscriptions")
       .select("stripe_subscription_id, current_period_end")
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
-
+ 
     if (subError || !sub) return { current_period_end: null, error: "Subscription not found" }
-
+ 
     if (sub.current_period_end) return { current_period_end: sub.current_period_end, error: null }
-
+ 
     if (!sub.stripe_subscription_id) return { current_period_end: null, error: null }
-
+ 
     const stripeSub = await stripe.subscriptions.retrieve(sub.stripe_subscription_id) as unknown as { items: { data: { current_period_end: number }[] } }
     const periodEndUnix = stripeSub.items?.data?.[0]?.current_period_end
-
+ 
     if (!periodEndUnix) return { current_period_end: null, error: null }
-
+ 
     const periodEndISO = new Date(periodEndUnix * 1000).toISOString()
-
+ 
     await supabase
       .from("subscriptions")
       .update({ current_period_end: periodEndISO, updated_at: new Date().toISOString() })
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
-
+ 
     revalidatePath("/account")
     return { current_period_end: periodEndISO, error: null }
   } catch (e) {

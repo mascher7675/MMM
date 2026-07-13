@@ -554,6 +554,112 @@ export async function sendOrderCancelledEmail(data: OrderCancelledEmailData) {
 }
 
 // ---------------------------------------------------------------------------
+// Subscription Cancelled — Confirmation Email (to customer)
+// Sent whenever a customer cancels their subscription via
+// cancelSubscriptionAtPeriodEnd. Covers all three outcomes that function can
+// produce:
+//   1. refunded = true                         → cancelled immediately, upcoming charge refunded
+//   2. refunded = false, finalDeliveryDateLabel → cutoff already passed, one last delivery ships
+//   3. refunded = false, no finalDeliveryDateLabel → nothing was pending, subscription just stops
+// ---------------------------------------------------------------------------
+
+export interface SubscriptionCancelledEmailData {
+  customerEmail: string
+  customerName: string
+  refunded: boolean
+  refundAmountCents?: number | null
+  finalDeliveryDateLabel?: string | null   // already-formatted, e.g. "Friday, July 18th" — set only when a locked-in delivery still ships
+}
+
+export async function sendSubscriptionCancelledEmail(data: SubscriptionCancelledEmailData) {
+  const refundStr = data.refundAmountCents != null ? `$${(data.refundAmountCents / 100).toFixed(2)}` : null
+
+  const bodyIntro = data.refunded
+    ? `Your subscription has been cancelled, effective immediately. ${refundStr ? `${refundStr} for your upcoming delivery has been refunded to your original payment method — it can take a few business days to show up on your statement.` : "Your upcoming delivery has been refunded to your original payment method."} No further deliveries or charges will follow.`
+    : data.finalDeliveryDateLabel
+      ? `Your subscription has been cancelled. Your delivery on ${data.finalDeliveryDateLabel} was already locked in and will still arrive as your final delivery — no further charges after that.`
+      : `Your subscription has been cancelled. No further deliveries or charges will follow.`
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"></head>
+      <body style="margin:0;padding:0;background:#e8e3db;">
+        <div style="max-width:600px;margin:0 auto;background:#FAF7F2;border-radius:4px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <div style="background:#2C3E2D;padding:44px 48px 36px;text-align:center;">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:11px;letter-spacing:4px;color:#85B972;text-transform:uppercase;margin-bottom:12px;">North Fork, Long Island</div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:34px;font-weight:normal;color:#FAF7F2;letter-spacing:1px;line-height:1.1;">Modern Milk Maid</div>
+            <div style="margin-top:16px;display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <span style="font-family:Georgia,serif;font-size:18px;color:#85B972;margin:0 12px;">&#10023;</span>
+            <div style="display:inline-block;width:40px;height:1px;background:#85B972;vertical-align:middle;"></div>
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:13px;color:#a8bfab;letter-spacing:2px;text-transform:uppercase;margin-top:14px;">Fresh Plant-Based Milks</div>
+          </div>
+
+          <!-- Banner -->
+          <div style="background:#5A81A5;padding:16px 48px;text-align:center;">
+            <span style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#ffffff;letter-spacing:0.5px;">&#10003; &nbsp;Your subscription has been cancelled</span>
+          </div>
+
+          <!-- Body -->
+          <div style="padding:44px 48px;">
+
+            <p style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#2C3E2D;margin:0 0 8px;">Hi ${data.customerName},</p>
+            <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;color:#5a5a4e;line-height:1.7;margin:0 0 36px;">${bodyIntro}</p>
+
+            ${refundStr ? `
+            <div style="margin-bottom:36px;padding:20px 24px;background:#F0EBE2;border-radius:4px;">
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:8px;">Refunded</div>
+              <div style="font-family:Georgia,serif;font-size:15px;color:#2C3E2D;">${refundStr}</div>
+            </div>
+            ` : ""}
+
+            <div style="margin-top:8px;padding:20px 24px;background:#eef3f8;border-left:3px solid #5A81A5;border-radius:0 4px 4px 0;">
+              <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;color:#3a5a7a;line-height:1.6;margin:0;">
+                Changed your mind? You can start a new subscription anytime from your
+                <a href="${process.env.NEXT_PUBLIC_APP_URL ?? 'https://modernmilkmaid.store'}/account" style="color:#5A81A5;text-decoration:underline;">account page</a>.
+              </p>
+            </div>
+
+            <!-- Sign-off -->
+            <div style="margin-top:36px;padding-top:32px;border-top:1px solid #EDE8DF;">
+              <p style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:14px;color:#5a5a4e;line-height:1.7;margin:0;">Any questions? Just reply here — we're always happy to help.</p>
+            </div>
+
+          </div>
+
+          <!-- Footer -->
+          <div style="background:#2C3E2D;padding:28px 48px;text-align:center;">
+            <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:#85B972;">Modern Milk Maid &nbsp;·&nbsp; North Fork, Long Island, NY</div>
+          </div>
+
+        </div>
+      </body>
+    </html>
+  `
+
+  try {
+    const { data: emailData, error } = await resend.emails.send({
+      from: FROM_ADDRESS,
+      to: [data.customerEmail],
+      subject: `Your subscription has been cancelled — Modern Milk Maid`,
+      html,
+    })
+
+    if (error) {
+      console.error('Error sending subscription cancelled email:', error)
+      return { success: false, error }
+    }
+
+    return { success: true, data: emailData }
+  } catch (error) {
+    console.error('Error sending subscription cancelled email:', error)
+    return { success: false, error }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Contact Notification Email (unchanged)
 // ---------------------------------------------------------------------------
 

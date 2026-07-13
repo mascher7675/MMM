@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe"
-import { createClient } from "@/lib/supabase/server"
+import { createServiceClient } from "@/lib/supabase/service"
 import Stripe from "stripe"
 import { cutoffUnixForDeliveryDate, easternDateStrFromUnix } from "@/lib/delivery-utils"
 
@@ -39,6 +39,15 @@ export const runtime = "nodejs"
 //                             act on (renewal invoices only — the signup
 //                             invoice is handled by the success page).
 // - customer.subscription.deleted → mark our subscription row cancelled.
+//
+// Auth note (added during pre-launch security pass): every supabase.rpc()
+// call below hits a SECURITY DEFINER function that bypasses RLS by design —
+// that's required for a webhook, since there's no logged-in user. Those
+// functions' EXECUTE privilege is now locked to the service_role only (see
+// migration lock_down_webhook_rpcs_to_service_role /
+// revoke_public_execute_on_webhook_rpcs), so this route must authenticate
+// with the service-role client, not the anon-key one. Using the anon-key
+// client here would now just fail these calls outright.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -228,7 +237,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 
   if (!stripeSubscriptionId) return
 
-  const supabase = await createClient()
+  const supabase = createServiceClient()
 
   const { data: wasFound, error } = await supabase.rpc("mark_subscription_cancelled_by_stripe_id", {
     p_stripe_subscription_id: stripeSubscriptionId,
@@ -271,7 +280,7 @@ async function lookupSubAndDeliveryDate(
     return null
   }
 
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const { data: rows, error: subError } = await supabase.rpc("get_subscription_for_webhook", {
     p_stripe_subscription_id: stripeSubscriptionId,
   })
@@ -317,7 +326,7 @@ async function handleInvoiceUpcoming(invoice: Stripe.Invoice) {
 
   if (sub.status !== "active") return
 
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const isSkipped = sub.skipped_dates.includes(deliveryDate)
 
   const { data: orderResult, error: orderError } = await supabase.rpc("create_weekly_delivery_order", {
@@ -373,7 +382,7 @@ async function handleInvoiceCreated(invoice: Stripe.Invoice) {
   if (!ctx) return
   const { stripeSubscriptionId, sub, deliveryDate } = ctx
 
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const isSkipped = sub.skipped_dates.includes(deliveryDate)
 
   // 1. Ensure the order row exists (idempotent — duplicate-safe RPC).
@@ -514,7 +523,7 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     return
   }
 
-  const supabase = await createClient()
+  const supabase = createServiceClient()
 
   const { data: attachResult, error: attachError } = await supabase.rpc("attach_payment_to_weekly_order", {
     p_stripe_subscription_id: stripeSubscriptionId,

@@ -272,12 +272,16 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                {sub.status === "active" && (
-                  <div className="hidden text-right sm:block">
-                    <p className="text-xs text-muted-foreground">Next delivery</p>
-                    <p className="text-sm font-medium">{fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))}</p>
-                  </div>
-                )}
+                <div className="hidden text-right sm:block">
+                  <p className={`text-xs text-muted-foreground ${sub.status === "active" ? "" : "invisible"}`}>
+                    Next delivery
+                  </p>
+                  <p className={`text-sm font-medium ${sub.status === "active" ? "" : "invisible"}`}>
+                    {sub.status === "active"
+                      ? fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))
+                      : "—"}
+                  </p>
+                </div>
                 {isOpen ? (
                   <ChevronUp className="h-4 w-4 text-muted-foreground" />
                 ) : (
