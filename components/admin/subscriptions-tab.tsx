@@ -3,11 +3,12 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { ChevronDown, ChevronUp, Mail, SkipForward, PlayCircle, ExternalLink, X, ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronDown, ChevronUp, Mail, SkipForward, PlayCircle, ExternalLink, X, ChevronLeft, ChevronRight, Ban } from "lucide-react"
 import {
   adminSkipWeeklyDelivery,
   adminUnskipWeeklyDelivery,
   adminUpdateSubscriptionStatus,
+  adminCancelSubscriptionOnStripe,
 } from "@/app/actions/admin"
 import { fmt, fmtDate, STATUS_COLORS } from "./admin-types"
 import { computeDeliveryDates, computeNextDeliveryDate } from "@/lib/delivery-utils"
@@ -175,7 +176,7 @@ export function SubscriptionsTab({ subscriptions }: Props) {
   const router = useRouter()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [skipModalSubId, setSkipModalSubId] = useState<string | null>(null)
-  const [, startTransition] = useTransition()
+  const [isPending, startTransition] = useTransition()
   const [filter, setFilter] = useState("all")
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 20
@@ -374,7 +375,11 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                       Skip Deliveries
                     </button>
 
-                    {/* Cancelled */}
+                    {/* Mark Cancelled — label-only override in Supabase.
+                        Does NOT stop Stripe billing. Use for manual/cash subs
+                        with no Stripe subscription, or bookkeeping fixes. To
+                        actually stop charging the card, use "Cancel Subscription"
+                        below. */}
                     <button
                       onClick={() =>
                         startTransition(async () => {
@@ -388,8 +393,41 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                           : "border-border bg-card hover:bg-secondary"
                       }`}
                     >
-                      Cancelled
+                      Mark Cancelled
                     </button>
+
+                    {/* Cancel Subscription — the real thing. Immediately cancels
+                        the Stripe subscription (stops all future charges) and
+                        sets status to cancelled. Irreversible on Stripe: a new
+                        subscription must be created to resume. Does NOT refund
+                        the current already-charged week — use the Refund button
+                        on the Orders tab for that if needed. */}
+                    {sub.stripe_subscription_id && sub.status !== "cancelled" && (
+                      <button
+                        onClick={() => {
+                          const ok = window.confirm(
+                            `Cancel this subscription for ${sub.customer_email ?? "this customer"}?\n\n` +
+                            `• Stops all future weekly charges immediately on Stripe.\n` +
+                            `• This cannot be undone — a new subscription would have to be created to resume.\n` +
+                            `• It does NOT refund the current already-charged week. To refund that week, use the Refund button on the Orders tab.`
+                          )
+                          if (!ok) return
+                          startTransition(async () => {
+                            const r = await adminCancelSubscriptionOnStripe(sub.id)
+                            if (r.error) {
+                              window.alert(`Failed to cancel subscription: ${r.error}`)
+                              return
+                            }
+                            router.refresh()
+                          })
+                        }}
+                        disabled={isPending}
+                        className="flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                      >
+                        <Ban className="h-3.5 w-3.5" />
+                        Cancel Subscription
+                      </button>
+                    )}
                   </div>
                 </div>
 
