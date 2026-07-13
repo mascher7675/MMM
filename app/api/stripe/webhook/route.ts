@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { stripe } from "@/lib/stripe"
 import { createClient } from "@/lib/supabase/server"
 import Stripe from "stripe"
+import { cutoffUnixForDeliveryDate, easternDateStrFromUnix } from "@/lib/delivery-utils"
 
 export const runtime = "nodejs"
 
@@ -44,18 +45,11 @@ export const runtime = "nodejs"
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Convert a Unix timestamp to a YYYY-MM-DD string in EST (UTC-5). */
-function unixToESTDateStr(unixTs: number): string {
-  const EST_OFFSET_MS = -5 * 60 * 60 * 1000
-  const d = new Date(unixTs * 1000 + EST_OFFSET_MS)
-  const yyyy = d.getUTCFullYear()
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0")
-  const dd = String(d.getUTCDate()).padStart(2, "0")
-  return `${yyyy}-${mm}-${dd}`
-}
-
-/** 5 PM EST expressed in UTC — matches the cutoff convention in delivery-utils.ts. */
-const CUTOFF_HOUR_UTC = 22
+// The old local date/cutoff helpers were removed here. They assumed a fixed
+// UTC-5 offset, which is wrong half the year (EDT = UTC-4), so cutoffs during
+// daylight time were computed an hour late. Date/cutoff math now delegates to
+// the DST-safe helpers imported from lib/delivery-utils.ts (the same ones used
+// by subscription.ts and the rest of the app).
 
 /**
  * Extract the subscription id from an invoice.
@@ -155,10 +149,19 @@ function getDeliveryDateForPeriod(
   return null
 }
 
-/** The next cutoff after a given delivery date: delivery + 6 days, 5 PM EST. */
+/**
+ * The next cutoff after a given delivery date: 5 PM Eastern on delivery + 6
+ * days. DST-safe. cutoffUnixForDeliveryDate(X) returns "5 PM ET the evening
+ * before X", so to get "5 PM ET on delivery + 6" we ask for the cutoff before
+ * delivery + 7 (same trick used in subscription.ts).
+ */
 function nextPeriodEndISOFromDelivery(deliveryDate: string): string {
   const [y, m, d] = deliveryDate.split("-").map(Number)
-  return new Date(Date.UTC(y, m - 1, d + 6, CUTOFF_HOUR_UTC, 0, 0)).toISOString()
+  const nextDelivery = new Date(y, m - 1, d + 7)
+  const yyyy = nextDelivery.getFullYear()
+  const mm = String(nextDelivery.getMonth() + 1).padStart(2, "0")
+  const dd = String(nextDelivery.getDate()).padStart(2, "0")
+  return new Date(cutoffUnixForDeliveryDate(`${yyyy}-${mm}-${dd}`) * 1000).toISOString()
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +289,7 @@ async function lookupSubAndDeliveryDate(
     skipped_dates: Array.isArray(subRow.skipped_dates) ? subRow.skipped_dates : [],
   }
 
-  const periodStartDate = unixToESTDateStr(invoice.period_start)
+  const periodStartDate = easternDateStrFromUnix(invoice.period_start)
   const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day)
 
   if (!deliveryDate) {

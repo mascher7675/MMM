@@ -457,7 +457,7 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                           {isCancelled && (
                             <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/30">
                               <p className="text-sm text-gray-600 dark:text-gray-400">
-                                This order was cancelled
+                                This {order.order_type === "subscription" ? "subscription " : ""}order was cancelled
                                 {order.cancelled_at && (
                                   <> on {formatOrderDate(order.cancelled_at!)}</>
                                 )}.

@@ -24,11 +24,11 @@ const faqs = [
   },
   {
     question: "Can I pause or cancel my subscription?",
-    answer: "Absolutely! Pause anytime from your account dashboard. No commitments, no cancellation fees.",
+    answer: "Absolutely! Skip an upcoming delivery or cancel anytime from your account dashboard \u2014 do it before your weekly cutoff and you won't be charged for that week. No commitments, no cancellation fees.",
   },
   {
     question: "What sizes are available?",
-    answer: "All three milk varieties come in 16oz and 32oz glass mason jars. Perfect for individuals or families.",
+    answer: "All four milk varieties \u2014 oat, almond, hemp seed, and cashew \u2014 come in 16oz and 32oz glass mason jars. Perfect for individuals or families.",
   },
   {
     question: "Do you offer one-time purchases?",

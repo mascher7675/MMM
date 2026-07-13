@@ -35,7 +35,7 @@ export function Footer() {
                 <Instagram className="h-4 w-4" />
               </a>
               <a
-                href="mailto:hello@modernmilkmaid.com"
+                href="mailto:hello@modernmilkmaid.store"
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-background/20 text-background transition-colors hover:border-sage hover:bg-sage hover:text-sage-foreground"
                 aria-label="Email us"
               >
@@ -106,20 +106,20 @@ export function Footer() {
               </li>
               <li>
                 <a
-                  href="mailto:hello@modernmilkmaid.com"
+                  href="mailto:hello@modernmilkmaid.store"
                   className="flex items-center gap-3 text-sm text-background/80 transition-colors hover:text-sage"
                 >
                   <Mail className="h-4 w-4 shrink-0 text-sage" />
-                  hello@modernmilkmaid.com
+                  hello@modernmilkmaid.store
                 </a>
               </li>
               <li>
                 <a
-                  href="tel:+16315551234"
+                  href="tel:+16316559549"
                   className="flex items-center gap-3 text-sm text-background/80 transition-colors hover:text-sage"
                 >
                   <Phone className="h-4 w-4 shrink-0 text-sage" />
-                  (631) 555-1234
+                  (631) 655-9549
                 </a>
               </li>
             </ul>

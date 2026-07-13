@@ -427,11 +427,19 @@ export async function cancelSubscriptionAtPeriodEnd(
           }
         }
 
+        // Keep the Stripe subscription alive but scheduled to end at period
+        // end, so the customer can still reactivate before their next billing
+        // date. (Previously this did a terminal cancel, which could never be
+        // undone.) The refunded delivery's order is already marked cancelled
+        // above, so no milk ships this week and no further charge occurs
+        // unless the customer reactivates.
         if (sub.stripe_subscription_id) {
           try {
-            await stripe.subscriptions.cancel(sub.stripe_subscription_id)
+            await stripe.subscriptions.update(sub.stripe_subscription_id, {
+              cancel_at_period_end: true,
+            })
           } catch (cancelErr) {
-            console.error("Failed to immediately cancel subscription after refund:", cancelErr)
+            console.error("Failed to schedule subscription cancellation after refund:", cancelErr)
           }
         }
 
@@ -457,10 +465,19 @@ export async function cancelSubscriptionAtPeriodEnd(
     await supabase
       .from("subscriptions")
       .update({
-        cancel_at_period_end: !refunded,
+        // Both paths (refund-before-cutoff and ship-after-cutoff) now schedule
+        // cancellation at period end and keep the row "active" until Stripe
+        // finalizes it — the customer.subscription.deleted webhook flips it to
+        // "cancelled" when the period actually ends. This keeps the
+        // subscription reactivatable until the next billing cutoff in EVERY
+        // case. final_delivery_date distinguishes the two states for the UI:
+        // null = refunded (no delivery this week); set = a paid delivery still
+        // ships. current_period_end is intentionally left unchanged — it's the
+        // reactivate deadline shown to the customer, synced from Stripe by the
+        // client if it's currently null (syncPeriodEndFromStripe).
+        cancel_at_period_end: true,
         final_delivery_date: finalDeliveryDate,
-        current_period_end: refunded ? null : undefined,
-        status: refunded ? "cancelled" : "active", // otherwise webhook flips this once Stripe confirms termination at period end
+        status: "active",
         updated_at: new Date().toISOString(),
       })
       .eq("id", subscriptionId)
