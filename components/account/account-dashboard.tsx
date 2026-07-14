@@ -374,12 +374,6 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                           <p className="mt-1 text-sm text-muted-foreground">
                             {formatOrderDate(order.created_at)} · {totalQty} item{totalQty !== 1 ? "s" : ""}
                           </p>
-                          {order.delivery_date && (
-                            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                              <Truck className="h-3 w-3 shrink-0" />
-                              Delivery: {formatDeliveryDate(order.delivery_date)}
-                            </p>
-                          )}
                         </div>
                         <div className="flex items-center gap-3">
                           <p className="font-semibold text-foreground">
@@ -418,6 +412,17 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                             </div>
                           )}
  
+                          {/* Delivery date */}
+                          {order.delivery_date && (
+                            <div>
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1">Delivery Date</p>
+                              <p className="text-sm flex items-center gap-1.5 text-foreground">
+                                <Truck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                {formatDeliveryDate(order.delivery_date)}
+                              </p>
+                            </div>
+                          )}
+
                           {/* Delivery address */}
                           {order.delivery_address && (
                             <div>

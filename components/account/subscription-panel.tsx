@@ -19,12 +19,12 @@ import {
 } from "@/components/ui/alert-dialog"
 import {
   CalendarDays,
+  Check,
   CheckCircle,
   Loader2,
   ShoppingBag,
   RotateCcw,
   CreditCard,
-  AlertTriangle,
   Lock,
   Repeat2,
   ChevronDown,
@@ -507,6 +507,17 @@ function SingleSubscriptionCard({
     }
   }
  
+  // Called from the cancel dialog's "Skip a delivery instead" button: closes
+  // the dialog (via AlertDialogCancel) and opens/scrolls to the Skip section.
+  function handleSkipInstead() {
+    setOpenSection("skip")
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`skip-section-${activeSubscription.id}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" })
+    })
+  }
+
   async function handleCancel() {
     setIsCancelling(true)
     setError(null)
@@ -589,6 +600,21 @@ function SingleSubscriptionCard({
     ? formatDateLong(activeSubscription.final_delivery_date)
     : null
 
+  // The date by which the customer can still reactivate — their next billing
+  // cutoff. Shown in the cancellation banner.
+  const reactivateByDisplay: string | null = activeSubscription.current_period_end
+    ? formatDateLong(activeSubscription.current_period_end)
+    : null
+
+  // The "final delivery is still coming / contact us" messaging is only
+  // relevant through the delivery day itself. Once that day has passed, this
+  // week's delivery has been made and the line drops off (the reactivate
+  // option still remains until the next billing cutoff).
+  const finalDeliveryStillUpcoming: boolean =
+    !!activeSubscription.final_delivery_date &&
+    todayISO !== null &&
+    activeSubscription.final_delivery_date.slice(0, 10) >= todayISO
+
   const skippedCount = localSkippedDates.filter((d) => upcomingDates.includes(d)).length
  
   // ── Render ────────────────────────────────────────────────────────────────
@@ -601,35 +627,54 @@ function SingleSubscriptionCard({
         </div>
       )}
  
-      {/* Cancellation banner */}
+      {/* Cancellation banner — adaptive.
+          Both cancel paths keep the subscription reactivatable until the next
+          billing cutoff. final_delivery_date distinguishes them:
+            • null  → cancelled before cutoff, this week refunded (no delivery)
+            • set   → cancelled after cutoff, the paid delivery still ships
+          The "final delivery / contact us" line only shows through the
+          delivery day (finalDeliveryStillUpcoming). */}
       {isCancellationScheduled && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+        <div className="overflow-hidden rounded-xl border border-sage/30 bg-linear-to-br from-sage/[0.07] to-transparent p-4 shadow-sm">
           <div className="flex items-start gap-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-            <div className="flex-1 space-y-2">
-              <p className="text-sm font-medium text-amber-900 dark:text-amber-200">
-                Cancellation scheduled
+            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sage/15 text-sage">
+              <RotateCcw className="h-4 w-4" />
+            </div>
+            <div className="flex-1 space-y-1.5">
+              <p className="text-sm font-semibold text-foreground">
+                {finalDeliveryStillUpcoming ? "One last delivery, then cancelled" : "Subscription cancelled"}
               </p>
+
+              {/* Primary status line */}
               {finalDeliveryDisplay ? (
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Your delivery on <span className="font-medium">{finalDeliveryDisplay}</span> was already
-                  charged before you cancelled, so it will still go out as your final delivery. No further
-                  charges will occur.
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  Your delivery on <span className="font-medium text-foreground">{finalDeliveryDisplay}</span> was
+                  already charged, so it will still {finalDeliveryStillUpcoming ? "arrive" : "have arrived"}. No
+                  further deliveries are scheduled after that.
+                </p>
+              ) : isSyncingPeriodEnd ? (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Finalising your cancellation…
                 </p>
               ) : (
-                <p className="text-xs text-amber-700 dark:text-amber-400">
-                  {isSyncingPeriodEnd ? (
-                    <span className="flex items-center gap-1.5">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Loading delivery schedule…
-                    </span>
-                  ) : (
-                    "You won't be charged again, and no further deliveries are scheduled."
-                  )}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  You won&apos;t be charged again, and any charge for your upcoming delivery has been refunded.
                 </p>
               )}
+
+              {/* Reactivate deadline */}
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Changed your mind?{" "}
+                {reactivateByDisplay ? (
+                  <>Reactivate before <span className="font-medium text-foreground">{reactivateByDisplay}</span> to keep your weekly deliveries.</>
+                ) : (
+                  <>Reactivate before your next billing date to keep your weekly deliveries.</>
+                )}
+              </p>
             </div>
           </div>
+
           <div className="mt-3">
             {reactivateSuccess ? (
               <div className="flex items-center gap-2 rounded-md border border-sage/40 bg-sage/10 px-3 py-2 text-xs text-sage">
@@ -640,21 +685,28 @@ function SingleSubscriptionCard({
               <Button
                 onClick={handleReactivate}
                 disabled={isReactivating}
-                variant="outline"
                 size="sm"
-                className="w-full gap-2 border-amber-300 bg-white text-amber-900 hover:bg-amber-50 hover:text-amber-900 dark:border-amber-700 dark:bg-transparent dark:text-amber-200 dark:hover:text-amber-200"
+                className="w-full gap-2 bg-sage text-white hover:bg-sage/90"
               >
                 {isReactivating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                 Keep my subscription
               </Button>
             )}
           </div>
+
+          {/* "This week" help line — only relevant through the delivery day */}
+          {finalDeliveryStillUpcoming && (
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              Need help with this delivery? Just contact us.
+            </p>
+          )}
         </div>
       )}
- 
+
       {/* Delivery-today banner — shows only on the customer's delivery
           weekday, before 3 PM ET, when this week isn't skipped and the
-          subscription isn't in a cancellation-scheduled state. Purely
+          subscription isn't in a cancellation-scheduled state (the
+          cancellation banner above already covers that state). Purely
           informational; changes no delivery/billing logic. */}
       {isDeliveryMorning &&
         !isCancellationScheduled &&
@@ -664,7 +716,7 @@ function SingleSubscriptionCard({
             <span className="text-sm font-medium">Your delivery is on its way today</span>
           </div>
         )}
-
+ 
       {/* Main panel */}
       <div className="rounded-lg border border-border overflow-hidden">
  
@@ -811,6 +863,7 @@ function SingleSubscriptionCard({
         </CollapsibleRow>
  
         {/* Skip deliveries */}
+        <div id={`skip-section-${activeSubscription.id}`}>
         <CollapsibleRow
           icon={<SkipForward className="h-4 w-4" />}
           label="Skip a Delivery"
@@ -856,7 +909,8 @@ function SingleSubscriptionCard({
           </div>
         </CollapsibleRow>
  
-        {/* Delivery day */}
+        {/* Delivery day (end skip-section anchor above) */}
+        </div>
         <CollapsibleRow
           icon={<CalendarDays className="h-4 w-4" />}
           label="Delivery Day"
@@ -949,13 +1003,53 @@ function SingleSubscriptionCard({
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Cancel your subscription?</AlertDialogTitle>
+                <AlertDialogTitle>Need a break, or leaving for good?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  You won&apos;t be charged again. If your next delivery is already past its 5PM cutoff (the evening before your delivery),
-                  it is still scheduled to deliver. If not, your charge is refunded. Just need a break? Use &ldquo;Skip a
-                  Delivery&rdquo; above instead.
+                  If you just need to pause, skip a delivery and keep your subscription — you&apos;re never charged for skipped weeks.
                 </AlertDialogDescription>
               </AlertDialogHeader>
+
+              {/* Lighter path: skip instead (closes dialog + opens Skip section) */}
+              <AlertDialogCancel asChild>
+                <Button
+                  type="button"
+                  onClick={handleSkipInstead}
+                  className="mt-0 w-full gap-2 bg-sage text-white hover:bg-sage/90"
+                >
+                  <SkipForward className="h-4 w-4" />
+                  Skip a delivery instead
+                </Button>
+              </AlertDialogCancel>
+
+              {/* What happens if they do cancel — adapts to cutoff */}
+              <div className="mt-1 border-t border-border pt-4">
+                <p className="mb-3 text-xs font-medium text-muted-foreground">If you cancel:</p>
+                <ul className="space-y-2.5">
+                  {(isDeliverySkipLocked
+                    ? [
+                        "Your already-charged delivery still ships — cancelling only stops deliveries after it",
+                        "You won't be charged again",
+                        "Reactivate any time before your next billing date",
+                      ]
+                    : [
+                        "If you've already been charged for your upcoming delivery, it's refunded in full",
+                        "You won't be charged again",
+                        "Reactivate any time before your next billing date",
+                      ]
+                  ).map((item, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-sm text-foreground">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-sage" />
+                      <span className="leading-snug">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+                {isDeliverySkipLocked && (
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Need help with this week&apos;s delivery? Just contact us.
+                  </p>
+                )}
+              </div>
+
               <AlertDialogFooter>
                 <AlertDialogCancel className="cursor-pointer">Keep subscription</AlertDialogCancel>
                 <AlertDialogAction
@@ -964,7 +1058,7 @@ function SingleSubscriptionCard({
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
                 >
                   {isCancelling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Yes, cancel
+                  Cancel subscription
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
