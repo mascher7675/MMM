@@ -70,7 +70,7 @@ function computeCutoffUnixForNextDelivery(deliveryDay: "thursday" | "friday"): n
 // If we only updated Supabase, Stripe would keep charging on the OLD
 // weekday forever — silently breaking the "charge, then deliver the next
 // day" guarantee for every future week. isDeliveryDayChangeLocked() already
-// blocks changes during the Wed 5PM–Fri noon window that covers both
+// blocks changes during the Wed 5PM–Fri 3PM window that covers both
 // cutoffs, so whenever this function is actually allowed to run, the
 // customer's next pending charge hasn't fired yet and is safe to move by
 // the ±1 day gap between Thursday's and Friday's cutoffs — proration is
@@ -85,10 +85,10 @@ export async function updateDeliveryDay(
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated", nextDeliveryDate: null }
  
-    // Reject if we're in the Wednesday 5 PM – Friday noon lock window
+    // Reject if we're in the Wednesday 5 PM – Friday 3 PM lock window
     if (isDeliveryDayChangeLocked()) {
       return {
-        error: "Delivery day changes are locked from Wednesday at 5 PM until Friday at noon. Please try again after Friday noon.",
+        error: "Delivery day changes are locked from Wednesday at 5 PM until Friday at 3 PM. Please try again after Friday at 3 PM.",
         nextDeliveryDate: null,
       }
     }
@@ -735,7 +735,7 @@ export async function swapSubscriptionMilk(
     // Check milk-change lock (same 5 PM EST cutoff)
     const deliveryDay = sub.delivery_day as "thursday" | "friday"
     if (isSkipLocked(deliveryDay)) {
-      return { error: "Milk type changes are locked from 5 PM the evening before delivery until noon on delivery day." }
+      return { error: "Milk type changes are locked from 5 PM the evening before delivery until 3 PM on delivery day." }
     }
  
     // Look up the new product

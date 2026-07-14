@@ -91,6 +91,14 @@ function formatOrderDate(dateString: string): string {
   const ymd = dateString.slice(0, 10).split("-").map(Number)
   return `${MONTH_NAMES_SHORT[ymd[1] - 1]} ${ymd[2]}, ${ymd[0]}`
 }
+
+// "Thursday, May 22" — delivery date with weekday, no year. Deterministic
+// (no toLocaleDateString) to avoid SSR/browser hydration mismatches.
+function formatDeliveryDate(dateString: string): string {
+  const ymd = dateString.slice(0, 10).split("-").map(Number)
+  const jsDate = new Date(ymd[0], ymd[1] - 1, ymd[2])
+  return `${WEEKDAY_NAMES[jsDate.getDay()]}, ${MONTH_NAMES_SHORT[ymd[1] - 1]} ${ymd[2]}`
+}
  
 function getCutoffDateMs(order: Order): number | null {
   const dateStr = order.delivery_date
@@ -366,6 +374,12 @@ export function AccountDashboard({ user, profile, subscriptions, orders }: Accou
                           <p className="mt-1 text-sm text-muted-foreground">
                             {formatOrderDate(order.created_at)} · {totalQty} item{totalQty !== 1 ? "s" : ""}
                           </p>
+                          {order.delivery_date && (
+                            <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Truck className="h-3 w-3 shrink-0" />
+                              Delivery: {formatDeliveryDate(order.delivery_date)}
+                            </p>
+                          )}
                         </div>
                         <div className="flex items-center gap-3">
                           <p className="font-semibold text-foreground">

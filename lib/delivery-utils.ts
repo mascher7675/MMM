@@ -49,12 +49,15 @@ const ORDER_CUTOFF_HOUR_EST = 17  // 5 PM
 // Returns true when the skip/unskip window has closed for the given delivery day.
 //
 // Lock schedule (per delivery day):
-//   Thursday customers: locks Wed ≥ 5 PM EST, unlocks Thu ≥ 12 PM EST (noon)
-//   Friday customers:   locks Thu ≥ 5 PM EST, unlocks Fri ≥ 12 PM EST (noon)
+//   Thursday customers: locks Wed ≥ 5 PM EST, unlocks Thu ≥ 3 PM EST
+//   Friday customers:   locks Thu ≥ 5 PM EST, unlocks Fri ≥ 3 PM EST
 //
-// This matches the "cutoff is 5 PM the evening before delivery" rule.
+// This matches the "cutoff is 5 PM the evening before delivery" rule. The
+// reopen hour is 3 PM (not noon) because deliveries can run into the early
+// afternoon — reopening skip/change controls at noon, while trucks are still
+// out, would let a customer alter a delivery that's already in progress.
 // ---------------------------------------------------------------------------
-const UNLOCK_HOUR_EST = 12  // noon — skip window reopens after delivery
+const UNLOCK_HOUR_EST = 15  // 3 PM — skip window reopens after delivery finishes
 
 export function isSkipLocked(deliveryDay: "thursday" | "friday"): boolean {
   const targetDay = deliveryDay === "friday" ? FRIDAY : THURSDAY
@@ -66,10 +69,33 @@ export function isSkipLocked(deliveryDay: "thursday" | "friday"): boolean {
   // Locked: the evening before delivery, at or after 5 PM EST
   if (day === dayBefore && hour >= SKIP_CUTOFF_HOUR_EST) return true
 
-  // Locked: delivery day itself, before noon EST (delivery in progress)
+  // Locked: delivery day itself, before 3 PM EST (delivery in progress)
   if (day === targetDay && hour < UNLOCK_HOUR_EST) return true
 
   return false
+}
+
+// ---------------------------------------------------------------------------
+// isDeliveryDayMorning
+//
+// Returns true when TODAY is the customer's delivery weekday AND it's before
+// the 3 PM reopen hour — i.e. the delivery is happening right now. This is the
+// trigger for the "your delivery is on its way today" banner.
+//
+// Deliberately NOT the same as isSkipLocked: isSkipLocked is also true the
+// EVENING BEFORE delivery (Wed ≥ 5 PM for a Thursday customer), which is not a
+// "delivery is on its way today" moment. This helper is true only during the
+// delivery-day window itself (midnight → 3 PM on the delivery day), so the
+// banner never shows the night before.
+//
+// Note: this returns true even if the customer skipped this week's delivery —
+// callers must additionally check that today's date isn't in skipped_dates
+// before showing the banner (a skipped week has nothing on its way).
+// ---------------------------------------------------------------------------
+export function isDeliveryDayMorning(deliveryDay: "thursday" | "friday"): boolean {
+  const targetDay = deliveryDay === "friday" ? FRIDAY : THURSDAY
+  const est = nowInEST()
+  return est.getDay() === targetDay && est.getHours() < UNLOCK_HOUR_EST
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +217,7 @@ export function isDeliveryDayLocked(deliveryDay: "thursday" | "friday"): boolean
 // isDeliveryDayChangeLocked
 //
 // Returns true when DELIVERY DAY SWITCHING is locked.
-// Covers both delivery days: locks Wed ≥ 5 PM EST, unlocks Fri ≥ 12 PM EST.
+// Covers both delivery days: locks Wed ≥ 5 PM EST, unlocks Fri ≥ 3 PM EST.
 // ---------------------------------------------------------------------------
 export function isDeliveryDayChangeLocked(): boolean {
   const est = nowInEST()
@@ -204,7 +230,7 @@ export function isDeliveryDayChangeLocked(): boolean {
   // Locked: all of Thursday (between the two delivery days)
   if (day === THURSDAY) return true
 
-  // Locked: Friday before noon EST (Friday deliveries still in progress)
+  // Locked: Friday before 3 PM EST (Friday deliveries still in progress)
   if (day === FRIDAY && hour < UNLOCK_HOUR_EST) return true
 
   return false
