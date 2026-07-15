@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Loader2, MapPin } from "lucide-react"
 import { updateProfile } from "@/app/actions/profile"
 import { sendMessage } from "@/app/actions/messages"
+import { computeNextDeliveryDate } from "@/lib/delivery-utils"
 
 interface AddressFormData {
   firstName: string
@@ -69,38 +70,30 @@ const DELIVERABLE_ZIPS = [
   "11792", // Wading River
 ]
 
-// Day-of-week numbers: 0 = Sunday, 1 = Monday, ... 4 = Thursday, 5 = Friday
-const THURSDAY = 4
-const FRIDAY = 5
-const CUTOFF_HOUR = 22 // 10pm
-
 /**
- * Returns the next available delivery date for a given target day (THURSDAY or FRIDAY).
- * Cutoff is 10pm the day before delivery.
- * e.g. for Thursday delivery, cutoff is Wednesday at 10pm.
- * If it's past the cutoff, we skip to the following week.
+ * Returns the next available delivery date for a given delivery day, as a
+ * Date at local midnight — for DISPLAY ONLY.
+ *
+ * ⚠️ This MUST stay a thin wrapper over computeNextDeliveryDate() in
+ * lib/delivery-utils.ts. That helper is the single source of truth, and it's
+ * what app/actions/stripe.ts uses to stamp the actual delivery_date onto the
+ * order after payment.
+ *
+ * This file previously reimplemented the logic locally with a 10pm cutoff
+ * (`CUTOFF_HOUR = 22`) read off the BROWSER's clock via now.getHours(),
+ * while every other cutoff on the site — and the "Order by ... at 5pm" label
+ * rendered directly beneath these buttons — is 5pm Eastern. The two
+ * disagreed, so the date shown here could be a full week earlier than the
+ * date actually saved to the order and emailed to the customer (e.g. any
+ * Wednesday between 5pm and 10pm ET, or any customer on a non-Eastern
+ * device). Do not reintroduce local date math here.
  */
-function getNextDeliveryDate(targetDay: typeof THURSDAY | typeof FRIDAY): Date {
-  const now = new Date()
-  const result = new Date(now)
-
-  // How many days until the target day?
-  let daysUntil = (targetDay - now.getDay() + 7) % 7
-
-  // If daysUntil is 0, today IS the target day — already delivered, next week
-  if (daysUntil === 0) {
-    daysUntil = 7
-  }
-
-  // The cutoff is 5pm the day BEFORE delivery (i.e. daysUntil - 1 days from now at 17:00)
-  // If we're currently within 1 day of target AND past 5pm, skip to next week
-  if (daysUntil === 1 && now.getHours() >= CUTOFF_HOUR) {
-    daysUntil = 8 // next occurrence
-  }
-
-  result.setDate(now.getDate() + daysUntil)
-  result.setHours(0, 0, 0, 0)
-  return result
+function getNextDeliveryDate(deliveryDay: "thursday" | "friday"): Date {
+  const [y, m, d] = computeNextDeliveryDate(deliveryDay).split("-").map(Number)
+  // Local midnight on that calendar date — safe for toLocaleDateString().
+  // (Never `new Date("YYYY-MM-DD")`, which parses as UTC and can render as
+  // the previous day for Eastern viewers.)
+  return new Date(y, m - 1, d)
 }
 
 /** Format a date as "Thursday, Feb 13" */
@@ -112,11 +105,14 @@ function formatDeliveryDate(date: Date): string {
   })
 }
 
-/** Returns a note about the order cutoff for a given delivery date */
+/**
+ * Returns a note about the order cutoff for a given delivery date.
+ * The cutoff is 5pm Eastern the evening before delivery — the same rule
+ * enforced by computeNextDeliveryDate() and cutoffUnixForDeliveryDate().
+ */
 function getCutoffNote(deliveryDate: Date): string {
   const cutoff = new Date(deliveryDate)
   cutoff.setDate(cutoff.getDate() - 1)
-  cutoff.setHours(CUTOFF_HOUR, 0, 0, 0)
 
   const dayName = cutoff.toLocaleDateString("en-US", { weekday: "long" })
   return `Order by ${dayName} at 5pm`
@@ -156,8 +152,8 @@ export function CheckoutAddressForm({
   })
 
   // Compute next available dates once on render (they won't change mid-session)
-  const nextThursday = getNextDeliveryDate(THURSDAY)
-  const nextFriday = getNextDeliveryDate(FRIDAY)
+  const nextThursday = getNextDeliveryDate("thursday")
+  const nextFriday = getNextDeliveryDate("friday")
 
   // Always show the soonest option first (left)
   const deliveryOptions = [

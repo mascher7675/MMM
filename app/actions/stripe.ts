@@ -7,7 +7,7 @@ import { stripe } from "@/lib/stripe"
 import { PRODUCTS } from "@/lib/products"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail } from "@/lib/email"
-import { computeNextDeliveryDate } from "@/lib/delivery-utils"
+import { computeNextDeliveryDate, cutoffUnixForDeliveryDate } from "@/lib/delivery-utils"
 
 interface CartItem {
   productId: string
@@ -30,8 +30,9 @@ interface CartItem {
 //    (docs.stripe.com/billing/subscriptions/billing-cycle — "Change the
 //    billing period using a trial period").
 // 3. From then on, Stripe automatically charges the full weekly amount at
-//    the customer's cutoff (Wednesday 5 PM EST for Thursday customers,
-//    Thursday 5 PM EST for Friday customers), each charge paying for the
+//    the customer's cutoff (Wednesday 5 PM Eastern for Thursday customers,
+//    Thursday 5 PM Eastern for Friday customers — DST-safe, see
+//    delivery-utils.ts), each charge paying for the
 //    delivery that goes out the next day. The webhook handlers in
 //    app/api/stripe/webhook/route.ts take it from there.
 //
@@ -47,22 +48,39 @@ interface CartItem {
 // paid delivery still goes out.
 // ---------------------------------------------------------------------------
 
-// 5 PM EST expressed in UTC. The codebase standardizes on fixed EST (UTC-5)
-// for all cutoff logic (see delivery-utils.ts), so we do the same here.
-const CUTOFF_HOUR_UTC = 22
-
 /**
  * The cutoff gating the customer's SECOND delivery — where the first renewal
  * charge should land. First delivery is always the day after its own cutoff,
- * so the second delivery's cutoff is first delivery + 6 days, at 5 PM EST.
- * This lands 7–14 days out depending on signup timing, which is fine for
- * trial_end (unlike billing_cycle_anchor, it has no 7-day cap).
+ * so the second delivery is first delivery + 7 days, and its cutoff is 5 PM
+ * Eastern the evening before that. This lands 7–14 days out depending on
+ * signup timing, which is fine for trial_end (unlike billing_cycle_anchor,
+ * it has no 7-day cap).
+ *
+ * DST-safe: delegates to cutoffUnixForDeliveryDate in lib/delivery-utils.ts,
+ * the single source of truth for "what UTC instant is 5 PM Eastern the
+ * evening before delivery date D".
+ *
+ * ⚠️ This previously hand-rolled `Date.UTC(y, m-1, d+6, 22, 0, 0)` with a
+ * local `CUTOFF_HOUR_UTC = 22` constant, which only resolves to 5 PM Eastern
+ * during EST (roughly Nov–Mar). Through EDT — most of the delivery season —
+ * 5 PM ET is 21:00 UTC, so every first renewal was anchored an hour late,
+ * an hour AFTER the skip window had already locked. Do not reintroduce a
+ * fixed UTC offset here; see the notes in delivery-utils.ts.
  */
 function computeSecondCutoffUnix(deliveryDay: "thursday" | "friday"): number {
   const firstDelivery = computeNextDeliveryDate(deliveryDay)
   const [y, m, d] = firstDelivery.split("-").map(Number)
-  const ms = Date.UTC(y, m - 1, d + 6, CUTOFF_HOUR_UTC, 0, 0) // Date.UTC normalizes month/year overflow
-  return Math.floor(ms / 1000)
+
+  // Second delivery = first delivery + 7 days. Constructing a local Date and
+  // reading the components back normalizes month/year overflow for us; only
+  // the calendar date matters here, never the time-of-day.
+  const second = new Date(y, m - 1, d + 7)
+  const secondDeliveryStr =
+    `${second.getFullYear()}-` +
+    `${String(second.getMonth() + 1).padStart(2, "0")}-` +
+    `${String(second.getDate()).padStart(2, "0")}`
+
+  return cutoffUnixForDeliveryDate(secondDeliveryStr)
 }
 
 // ---------------------------------------------------------------------------

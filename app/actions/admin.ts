@@ -206,14 +206,31 @@ export async function getAdminStats() {
       supabase.from("subscriptions").select("*", { count: "exact", head: true }).eq("status", "active"),
       supabase.from("orders").select("*", { count: "exact", head: true }),
       supabase.from("messages").select("*", { count: "exact", head: true }).eq("status", "unread"),
+      // `status` is selected so weekly revenue can exclude cancelled/refunded
+      // orders — see the reduce below.
       supabase
         .from("orders")
-        .select("id,total,order_type")
+        .select("id,total,order_type,status")
         .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
       supabase.from("orders").select("total").eq("status", "confirmed"),
     ])
 
-    const weeklyRevenue = (ordersThisWeek.data ?? []).reduce((s, o) => s + (o.total ?? 0), 0)
+    // ── Revenue ────────────────────────────────────────────────────────────
+    // Both figures count CONFIRMED orders only, so they mean the same thing.
+    //
+    // This previously had no status filter at all, while allTimeRevenue
+    // filtered status = "confirmed". Cancelled orders keep their `total`
+    // intact (cancelAndRefundOrder only flips status and records
+    // refund_amount_cents), so every refunded order was still counted as
+    // weekly revenue at full price — money that was handed back to the
+    // customer. On this database that inflated the KPI from $90 to $174.
+    //
+    // Skipped orders are unaffected either way: create_weekly_delivery_order
+    // and set_weekly_order_skip_state both zero their total.
+    const weeklyOrdersData = ordersThisWeek.data ?? []
+    const weeklyRevenue = weeklyOrdersData
+      .filter((o) => o.status === "confirmed")
+      .reduce((s, o) => s + (o.total ?? 0), 0)
     const allTimeRevenue = (revenueResult.data ?? []).reduce((s, o) => s + (o.total ?? 0), 0)
 
     return {
@@ -223,7 +240,12 @@ export async function getAdminStats() {
       unreadMessages: unreadMessages ?? 0,
       weeklyRevenue,
       allTimeRevenue,
-      weeklyOrders: ordersThisWeek.data?.length ?? 0,
+      // "Orders This Week" excludes cancelled orders so the count agrees with
+      // the revenue figure beside it. Skipped orders ARE counted — they're
+      // real scheduled deliveries the customer chose to pause, not mistakes.
+      // If you'd rather this read as "orders placed", including cancelled
+      // ones, drop the filter — it's a reporting preference, not correctness.
+      weeklyOrders: weeklyOrdersData.filter((o) => o.status !== "cancelled").length,
       error: null,
     }
   } catch (e) {

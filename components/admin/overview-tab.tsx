@@ -12,6 +12,8 @@ const OVERVIEW_LIMIT = 5
 interface Props {
   stats: AdminStats
   orders: AdminOrder[]
+  /** Accepted for call-site compatibility with admin-dashboard.tsx; the
+   *  Overview renders subscription counts from `stats`, not from this list. */
   subscriptions: AdminSubscription[]
   messages: AdminMessage[]
 }
@@ -59,7 +61,14 @@ export function OverviewTab({ stats, orders, messages }: Props) {
               <div key={o.id} className="flex items-center justify-between rounded-lg border border-border p-3">
                 <div>
                   <p className="text-sm font-medium">{o.customer_name}</p>
-                  <p className="text-xs text-muted-foreground">#{o.id.slice(-8).toUpperCase()} · {fmtDate(o.created_at)}</p>
+                  {/* Must match the Orders tab exactly: that tab renders
+                      `order_code ?? id.slice(-5)` and its search box only
+                      matches on that value. This previously ignored
+                      order_code and showed id.slice(-8), so the number an
+                      admin read here could not be pasted into the Orders
+                      search — it was a different identifier for the same
+                      order. */}
+                  <p className="text-xs text-muted-foreground">#{(o.order_code ?? o.id.slice(-5)).toUpperCase()} · {fmtDate(o.created_at)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold">{fmt(o.total)}</p>
