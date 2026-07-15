@@ -1541,12 +1541,21 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
   try {
     const { supabase } = await requireAdmin()
 
+    // Include a subscription if EITHER it isn't cancelling, OR it is
+    // cancelling but this specific date is its promised final delivery
+    // (cancelSubscriptionAtPeriodEnd sets cancel_at_period_end=true
+    // permanently once a cancellation is scheduled — including the
+    // "cutoff already passed, this delivery is locked in and still ships"
+    // case, where final_delivery_date is set to this exact date). Filtering
+    // out ALL cancel_at_period_end=true rows here would silently drop that
+    // customer's already-paid, promised-to-ship final delivery from the
+    // route sheet — the driver would never know to go there.
     const { data: subs, error: subsError } = await supabase
       .from("subscriptions")
-      .select(`id, user_id, status, skipped_dates, stripe_subscription_id, subscription_items (product_name, size, quantity)`)
+      .select(`id, user_id, status, skipped_dates, stripe_subscription_id, final_delivery_date, subscription_items (product_name, size, quantity)`)
       .in("status", ["active"])
       .eq("delivery_day", deliveryDay)
-      .eq("cancel_at_period_end", false)
+      .or(`cancel_at_period_end.eq.false,final_delivery_date.eq.${deliveryDate}`)
 
     if (subsError) return { data: [], error: subsError.message }
 
