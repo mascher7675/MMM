@@ -276,7 +276,38 @@ export async function updateCustomerRole(
   role: "customer" | "admin"
 ): Promise<{ error: string | null }> {
   try {
-    const { supabase } = await requireAdmin()
+    const { supabase, user } = await requireAdmin()
+
+    // ── Lockout guard ──────────────────────────────────────────────────────
+    // Every admin action in this file goes through requireAdmin(), which gates
+    // on profiles.role. So demoting the last admin — or yourself — is
+    // irreversible FROM INSIDE THE APP: the only way back is editing the row
+    // directly in Supabase.
+    //
+    // The protect_privileged_profile_columns trigger does NOT cover this. It
+    // exempts admins outright ("IF public.is_admin() THEN RETURN NEW"), so it
+    // stops customers escalating themselves, not admins demoting themselves.
+    //
+    // This matters because the role dropdown sits in the Customers table
+    // right next to ordinary customers, and the admin's own row is listed
+    // there too (getAdminCustomers does a bare select with no role filter) —
+    // one misclick in a paginated list is all it takes.
+    if (role === "customer") {
+      if (customerId === user.id) {
+        return { error: "You can't remove your own admin access — ask the other admin to do it." }
+      }
+
+      const { count, error: countError } = await supabase
+        .from("profiles")
+        .select("*", { count: "exact", head: true })
+        .eq("role", "admin")
+
+      if (countError) return { error: countError.message }
+      if ((count ?? 0) <= 1) {
+        return { error: "Can't remove the last admin — the dashboard would become unreachable." }
+      }
+    }
+
     const { error } = await supabase
       .from("profiles")
       .update({ role, updated_at: new Date().toISOString() })

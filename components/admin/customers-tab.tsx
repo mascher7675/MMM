@@ -256,7 +256,11 @@ function DeleteConfirmModal({ customer, onClose, onConfirm }: DeleteConfirmModal
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          You are about to permanently delete <span className="font-medium text-foreground">{name}</span> and all their associated data.
+          You are about to permanently delete <span className="font-medium text-foreground">{name}</span>&apos;s profile.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Their past orders are <span className="font-medium text-foreground">not</span> deleted — they&apos;ll appear in
+          the Orders tab as &ldquo;Deleted Customer&rdquo;, where you can remove them individually.
         </p>
         <div className="flex justify-end gap-2">
           <button
@@ -290,6 +294,36 @@ export function CustomersTab({ customers }: Props) {
   const [, startTransition] = useTransition()
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 20
+
+  // Role changes can be REJECTED server-side: updateCustomerRole refuses to
+  // demote you or the last remaining admin, because requireAdmin() gates every
+  // admin action on profiles.role — losing it locks you out of /admin with no
+  // way back except editing the row directly in Supabase.
+  //
+  // This select used to be uncontrolled (`defaultValue`) with
+  // `void updateCustomerRole(...)`, which discarded the result. On a rejection
+  // the dropdown would sit there reading "customer" while the database still
+  // said "admin", with no error shown, until someone refreshed. Driving the
+  // value from state lets a rejection snap back and explain itself.
+  const [roleOverride, setRoleOverride] = useState<Record<string, string>>({})
+  const [roleError, setRoleError] = useState<Record<string, string>>({})
+
+  const handleRoleChange = async (
+    customerId: string,
+    currentRole: string,
+    nextRole: "customer" | "admin"
+  ) => {
+    setRoleOverride((prev) => ({ ...prev, [customerId]: nextRole }))
+    setRoleError((prev) => ({ ...prev, [customerId]: "" }))
+
+    const result = await updateCustomerRole(customerId, nextRole)
+
+    if (result.error) {
+      // Snap back to the value the server still holds.
+      setRoleOverride((prev) => ({ ...prev, [customerId]: currentRole }))
+      setRoleError((prev) => ({ ...prev, [customerId]: result.error ?? "Failed to update role" }))
+    }
+  }
 
   const filtered = customers.filter(c => {
     const q = search.toLowerCase()
@@ -436,22 +470,31 @@ export function CustomersTab({ customers }: Props) {
                       customer
                     </span>
                   ) : (
-                    <select
-                      defaultValue={c.role}
-                      onChange={(e) =>
-                        startTransition(() => {
-                          void updateCustomerRole(c.id, e.target.value as "customer" | "admin")
-                        })
-                      }
-                      className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
-                        c.role === "admin"
-                          ? "border-[#7C9885] bg-[#7C9885]/10 text-[#7C9885]"
-                          : "border-border bg-secondary text-muted-foreground"
-                      }`}
-                    >
-                      <option value="customer">customer</option>
-                      <option value="admin">admin</option>
-                    </select>
+                    <div className="space-y-1">
+                      <select
+                        value={roleOverride[c.id] ?? c.role}
+                        onChange={(e) =>
+                          void handleRoleChange(
+                            c.id,
+                            roleOverride[c.id] ?? c.role,
+                            e.target.value as "customer" | "admin"
+                          )
+                        }
+                        className={`rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          (roleOverride[c.id] ?? c.role) === "admin"
+                            ? "border-[#7C9885] bg-[#7C9885]/10 text-[#7C9885]"
+                            : "border-border bg-secondary text-muted-foreground"
+                        }`}
+                      >
+                        <option value="customer">customer</option>
+                        <option value="admin">admin</option>
+                      </select>
+                      {roleError[c.id] && (
+                        <p className="max-w-48 text-[10px] leading-tight text-red-600 whitespace-normal">
+                          {roleError[c.id]}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
