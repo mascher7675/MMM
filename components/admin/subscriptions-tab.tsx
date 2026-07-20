@@ -240,6 +240,22 @@ export function SubscriptionsTab({ subscriptions }: Props) {
         const skippedDates = (sub.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
         const hasSkips = skippedDates.length > 0
 
+        // A subscription the customer has cancelled stays status="active" until
+        // the customer.subscription.deleted webhook fires at the reactivate
+        // deadline — cancel_at_period_end is the only signal that it's winding
+        // down. This file ignored that field entirely (even though
+        // getAdminSubscriptions selects it and AdminSubscription types it), so
+        // a cancelling subscription was indistinguishable from a healthy one.
+        //
+        // final_delivery_date carries the rest of the story, per the contract
+        // documented in cancelSubscriptionAtPeriodEnd:
+        //   set  = one paid delivery still ships on that date
+        //   null = the pending delivery was refunded; nothing more ships
+        // (getDeliveryList relies on exactly this to decide whether the stop
+        // stays on the route sheet.)
+        const isEnding = sub.status === "active" && sub.cancel_at_period_end === true
+        const hasFinalDelivery = isEnding && !!sub.final_delivery_date
+
         return (
           <div key={sub.id} className="rounded-lg border border-border bg-card overflow-hidden">
             <button
@@ -251,6 +267,12 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                   <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_COLORS[sub.status] ?? STATUS_COLORS.default}`}>
                     {sub.status}
                   </span>
+                  {isEnding && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800 dark:bg-orange-950/40 dark:text-orange-300">
+                      <Ban className="h-2.5 w-2.5" />
+                      {hasFinalDelivery ? "Ending — 1 delivery left" : "Ending — no more deliveries"}
+                    </span>
+                  )}
                   {hasSkips && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
                       <SkipForward className="h-2.5 w-2.5" />
@@ -273,13 +295,26 @@ export function SubscriptionsTab({ subscriptions }: Props) {
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="hidden text-right sm:block">
+                  {/* A cancelling subscription is still status="active", so this
+                      used to confidently show a computed "Next delivery" date
+                      for a delivery that will never happen. Now it reports the
+                      promised final delivery, or says plainly that nothing
+                      further ships. */}
                   <p className={`text-xs text-muted-foreground ${sub.status === "active" ? "" : "invisible"}`}>
-                    Next delivery
+                    {isEnding ? (hasFinalDelivery ? "Final delivery" : "Ending") : "Next delivery"}
                   </p>
-                  <p className={`text-sm font-medium ${sub.status === "active" ? "" : "invisible"}`}>
-                    {sub.status === "active"
-                      ? fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))
-                      : "—"}
+                  <p
+                    className={`text-sm font-medium ${sub.status === "active" ? "" : "invisible"} ${
+                      isEnding ? "text-orange-700 dark:text-orange-400" : ""
+                    }`}
+                  >
+                    {sub.status !== "active"
+                      ? "—"
+                      : isEnding
+                        ? hasFinalDelivery
+                          ? fmtDate(sub.final_delivery_date as string)
+                          : "No more deliveries"
+                        : fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))}
                   </p>
                 </div>
                 {isOpen ? (

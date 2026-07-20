@@ -2,8 +2,10 @@
 
 "use client"
 
+import { Suspense } from "react"
 import Image from "next/image"
 import { X } from "lucide-react"
+import { useSearchParams } from "next/navigation"
 import { useCart } from "@/lib/cart-context"
 import { CheckoutForm } from "@/components/checkout-form"
 
@@ -23,8 +25,50 @@ interface CheckoutPageClientProps {
   initialAddress?: Partial<AddressData>
 }
 
-export function CheckoutPageClient({ userId, initialAddress }: CheckoutPageClientProps) {
+/**
+ * Wraps the real component in Suspense because it reads useSearchParams()
+ * (below) — required by Next's App Router so this doesn't force the whole
+ * route to opt out of static rendering. No fallback content needed: the
+ * parent Server Component (app/checkout/page.tsx) already calls
+ * supabase.auth.getUser(), which reads cookies and makes the page dynamic on
+ * every request, so this boundary should resolve immediately in practice.
+ */
+export function CheckoutPageClient(props: CheckoutPageClientProps) {
+  return (
+    <Suspense fallback={null}>
+      <CheckoutPageClientInner {...props} />
+    </Suspense>
+  )
+}
+
+function CheckoutPageClientInner({ userId, initialAddress }: CheckoutPageClientProps) {
   const { items, totalPriceInCents, removeItem } = useCart()
+  const searchParams = useSearchParams()
+
+  // Mixed-cart checkout pays in two Stripe sessions: the subscription item
+  // first, then the one-time items. Between the two, the browser round-trips
+  // through /checkout/success (which redirects back here with
+  // ?returning_from_phase=subscription) before the second payment. Reading
+  // the SAME param checkout-form.tsx already reads for that leg — not a new
+  // signal, just consuming it here too — so this stays correct without this
+  // file needing to know anything about checkout-form's internal state.
+  //
+  // Previously, the summary here was phase-blind: it always rendered the
+  // FULL cart and its combined total. During the phase-2 return, that showed
+  // the already-paid subscription item — with a live remove button, and a
+  // "Total" that included money already charged — sitting right next to a
+  // Stripe frame that was only ever going to charge the one-time remainder.
+  // A customer paying $20 would see "Total $50" next to it.
+  const isReturningFromSubscriptionPhase =
+    searchParams.get("returning_from_phase") === "subscription"
+
+  const displayItems = isReturningFromSubscriptionPhase
+    ? items.filter((item) => !item.isSubscription)
+    : items
+
+  const displayTotalInCents = isReturningFromSubscriptionPhase
+    ? displayItems.reduce((sum, item) => sum + item.priceInCents * item.quantity, 0)
+    : totalPriceInCents
 
   const formatPrice = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
@@ -35,13 +79,21 @@ export function CheckoutPageClient({ userId, initialAddress }: CheckoutPageClien
         <div className="rounded-lg border border-border bg-card p-6">
           <h2 className="mb-4 font-serif text-xl font-medium">Order Summary</h2>
 
+          {isReturningFromSubscriptionPhase && (
+            <div className="mb-4 rounded-md border border-sage/30 bg-sage/5 px-3 py-2 text-sm text-muted-foreground">
+              Your subscription payment is complete. Finish checkout below to pay for the remaining one-time items.
+            </div>
+          )}
+
           <div className="space-y-4">
-            {items.length === 0 ? (
+            {displayItems.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                Your cart is empty. Add some items before checking out.
+                {isReturningFromSubscriptionPhase
+                  ? "No one-time items remaining — you're all set."
+                  : "Your cart is empty. Add some items before checking out."}
               </p>
             ) : (
-              items.map((item) => (
+              displayItems.map((item) => (
                 <div
                   key={`${item.productId}-${item.isSubscription}`}
                   className="flex gap-4"
@@ -84,7 +136,7 @@ export function CheckoutPageClient({ userId, initialAddress }: CheckoutPageClien
           <div className="mt-6 border-t border-border pt-4">
             <div className="flex justify-between text-lg font-medium">
               <span>Total</span>
-              <span>{formatPrice(totalPriceInCents)}</span>
+              <span>{formatPrice(displayTotalInCents)}</span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               (Delivery included & tax free)

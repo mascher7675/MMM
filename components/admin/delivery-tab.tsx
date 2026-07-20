@@ -45,7 +45,17 @@ function groupItems<T extends { name: string; quantity: number }>(items: T[]): T
 }
 
 export function DeliveryTab() {
-  const [day, setDay] = useState<"thursday" | "friday">("thursday")
+  // Default to whichever delivery day comes first, rather than always
+  // "thursday". The day buttons already render in soonest-first order
+  // (sortedDeliveryDays below), so hardcoding "thursday" meant that on a
+  // FRIDAY — the morning you're actually driving the Friday route — the tab
+  // opened on next week's Thursday while the Friday button sat first and
+  // unselected. Lazy initializer because sortedDeliveryDays isn't defined
+  // until after this hook; getNextWeekdayDate is module-level, so it's safe
+  // to call here.
+  const [day, setDay] = useState<"thursday" | "friday">(() =>
+    getNextWeekdayDate(4).getTime() <= getNextWeekdayDate(5).getTime() ? "thursday" : "friday"
+  )
   const [list, setList] = useState<DeliveryStop[]>([])
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -106,7 +116,12 @@ export function DeliveryTab() {
 
   const handleSaveRoute = async () => {
     setSaving(true)
-    const result = await saveRouteOrder(list.map(s => s.customerId))
+    // `day` (this tab's own state) must travel with the save — see
+    // saveRouteOrder in app/actions/admin.ts and migration
+    // 018_add_friday_route_position: Thursday and Friday now have
+    // independent stored orderings, so this call has to say which one it's
+    // reordering.
+    const result = await saveRouteOrder(list.map(s => s.customerId), day)
     setSaving(false)
     if (result.error) { setError(result.error); return }
     setIsDirty(false)

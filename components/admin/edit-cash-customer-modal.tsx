@@ -15,7 +15,6 @@ import {
 } from "@/app/actions/admin"
 import { PRODUCT_OPTIONS } from "@/lib/products"
 import { getUpcomingThursFri } from "./admin-types"
-import { computeNextDeliveryDate } from "@/lib/delivery-utils"
 import type { AdminCustomer, CustomerHistorySubscription } from "@/app/actions/admin"
 
 interface Props {
@@ -59,9 +58,30 @@ function formatStartDate(dateStr: string): string {
 }
 
 // 4 individual start date cards: next 2 Thursdays + next 2 Fridays, sorted by date
+/**
+ * Nearest upcoming Thursday/Friday for a CASH subscription's first delivery —
+ * deliberately NOT computeNextDeliveryDate(). See the identical helper and
+ * full explanation in cash-customer-modal.tsx: computeNextDeliveryDate()
+ * enforces the 5pm cutoff that protects Stripe's billing anchor for ONLINE
+ * signups, which a cash subscription has none of. Using it here made this
+ * picker disagree with every other admin-facing cash date picker, which all
+ * intentionally include today.
+ */
+function nearestDeliveryDateNoCutoff(targetDay: "thursday" | "friday"): string {
+  const targetDayNum = targetDay === "friday" ? 5 : 4
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const daysUntil = (targetDayNum - d.getDay() + 7) % 7
+  d.setDate(d.getDate() + daysUntil)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, "0")
+  const dd = String(d.getDate()).padStart(2, "0")
+  return `${yyyy}-${mm}-${dd}`
+}
+
 function getStartDateOptions(): { day: "thursday" | "friday"; label: string; value: string }[] {
-  const thuFirst = computeNextDeliveryDate("thursday")
-  const friFirst = computeNextDeliveryDate("friday")
+  const thuFirst = nearestDeliveryDateNoCutoff("thursday")
+  const friFirst = nearestDeliveryDateNoCutoff("friday")
 
   const addWeeks = (dateStr: string, weeks: number): string => {
     const base = new Date(dateStr + "T12:00:00Z")
@@ -79,7 +99,27 @@ function getStartDateOptions(): { day: "thursday" | "friday"; label: string; val
     .map(o => ({ ...o, label: formatStartDate(o.value) }))
 }
 
-const START_DATE_OPTIONS = getStartDateOptions()
+/**
+ * ⚠️ Deliberately NOT a module-level constant.
+ *
+ * This used to be `const START_DATE_OPTIONS = getStartDateOptions()` at module
+ * scope, which meant the options were computed ONCE when the admin dashboard
+ * bundle first loaded, and then never again. The modal is mounted fresh each
+ * time it opens, but the module constant outlived every open/close cycle, so a
+ * dashboard left open (which they are — it's a single page with tabs) served
+ * dates that got staler by the day.
+ *
+ * Open the dashboard Monday, add a cash subscription Friday, and the picker
+ * still offered the PREVIOUS Thursday. The subscription itself still routes on
+ * future weeks, but its first order row gets stamped with a past delivery date,
+ * never appears on a route sheet, and sits in the Orders tab looking pending
+ * forever.
+ *
+ * Computing it per-mount (via the lazy useState initializer below) pins it to
+ * the moment the admin actually clicks "Add", which is the correct granularity.
+ * Note that `upcomingDates` in this same component was ALREADY computed inside
+ * the render — these two date sources silently disagreed with each other.
+ */
 
 export function EditCashCustomerModal({ customer, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<EditTab>("profile")
@@ -120,7 +160,10 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
   const [orderItems, setOrderItems] = useState([{ product_name: "Oat Milk - 32oz", size: "32oz", quantity: 1 }])
 
   // ── New subscription state — track the chosen start date (determines day too)
-  const [subStartDate, setSubStartDate] = useState(START_DATE_OPTIONS[0]?.value ?? "")
+  // Lazy initializer → evaluated once per MOUNT (i.e. per modal open),
+  // not once per page load. See the note above getStartDateOptions.
+  const [startDateOptions] = useState(getStartDateOptions)
+  const [subStartDate, setSubStartDate] = useState(() => startDateOptions[0]?.value ?? "")
   const [subItems, setSubItems] = useState([{ product_name: "Oat Milk - 32oz", size: "32oz", quantity: 1 }])
 
   // ── Manage (edit/cancel) existing subscription state
@@ -203,7 +246,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
   const handleAddSubscription = async () => {
     reset()
     if (subItems.length === 0) { setError("At least one item is required."); return }
-    const chosen = START_DATE_OPTIONS.find(o => o.value === subStartDate)
+    const chosen = startDateOptions.find(o => o.value === subStartDate)
     if (!chosen) { setError("Please select a start date."); return }
     setSaving(true)
     const result = await addSubscriptionToCashCustomer(customer.id, {
@@ -258,37 +301,33 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
   ]
 
   return (
-    <>
-      <div className="fixed inset-0 z-50 bg-black/40" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
-        <div
-          onClick={e => e.stopPropagation()}
-          className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl"
-        >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-xl border border-border bg-card shadow-xl">
 
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
-          <div className="min-w-0">
+        <div className="sticky top-0 flex items-center justify-between border-b border-border bg-card px-5 py-4">
+          <div>
             <div className="flex items-center gap-2">
-              <Banknote className="h-5 w-5 shrink-0 text-[#7C9885]" />
-              <h2 className="truncate font-serif text-lg font-medium">
+              <Banknote className="h-5 w-5 text-[#7C9885]" />
+              <h2 className="font-serif text-lg font-medium">
                 {[customer.first_name, customer.last_name].filter(Boolean).join(" ") || "Cash Customer"}
               </h2>
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">Cash customer · Edit profile or add orders</p>
           </div>
-          <button onClick={onClose} className="cursor-pointer shrink-0 rounded-md p-1 hover:bg-secondary transition-colors">
+          <button onClick={onClose} className="cursor-pointer rounded-md p-1 hover:bg-secondary transition-colors">
             <X className="h-4 w-4 text-muted-foreground" />
           </button>
         </div>
 
-        {/* Tab nav — horizontally scrollable so it never wraps/cramps on narrow screens */}
-        <div className="flex gap-1 overflow-x-auto border-b border-border bg-secondary/30 px-4 pt-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/* Tab nav */}
+        <div className="flex gap-1 border-b border-border bg-secondary/30 px-4 pt-2">
           {tabs.map(t => (
             <button
               key={t.id}
               onClick={() => { setActiveTab(t.id); reset() }}
-              className={`cursor-pointer flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-t-lg border border-b-0 px-3 py-2 text-xs font-medium transition-all ${
+              className={`cursor-pointer flex items-center gap-1.5 rounded-t-lg border border-b-0 px-3 py-2 text-xs font-medium transition-all ${
                 activeTab === t.id
                   ? "border-border bg-card text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"
@@ -299,7 +338,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
           ))}
         </div>
 
-        <div className="space-y-4 p-4 sm:p-5">
+        <div className="space-y-4 p-5">
           {error && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
           )}
@@ -450,7 +489,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
               <div>
                 <label className="mb-2 block text-xs font-medium text-muted-foreground">First Delivery Date</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {START_DATE_OPTIONS.map(({ day, label, value }) => (
+                  {startDateOptions.map(({ day, label, value }) => (
                     <button
                       key={value}
                       type="button"
@@ -553,18 +592,13 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
                           key={day}
                           type="button"
                           onClick={() => setManageDeliveryDay(day)}
-                          className={`cursor-pointer rounded-lg border-2 p-3 text-left transition-all ${
+                          className={`cursor-pointer rounded-lg border-2 p-3 text-sm font-medium capitalize transition-all ${
                             manageDeliveryDay === day
-                              ? "border-[#7C9885] bg-[#7C9885]/10"
+                              ? "border-[#7C9885] bg-[#7C9885]/10 text-[#7C9885]"
                               : "border-border hover:border-[#7C9885]/50"
                           }`}
                         >
-                          <p className={`text-sm font-medium capitalize ${manageDeliveryDay === day ? "text-[#7C9885]" : "text-foreground"}`}>
-                            {day}s
-                          </p>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            Next: {formatStartDate(computeNextDeliveryDate(day))}
-                          </p>
+                          {day}s
                         </button>
                       ))}
                     </div>
@@ -620,7 +654,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
                           <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                           This stops the customer from appearing on the weekly delivery route going forward. This can&apos;t be undone from here — you&apos;d need to create a new subscription to restart it.
                         </p>
-                        <div className="flex flex-col gap-2 sm:flex-row">
+                        <div className="flex gap-2">
                           <button
                             onClick={handleCancelSubscription}
                             disabled={saving}
@@ -644,8 +678,7 @@ export function EditCashCustomerModal({ customer, onClose }: Props) {
             </div>
           )}
         </div>
-        </div>
       </div>
-    </>
+    </div>
   )
 }

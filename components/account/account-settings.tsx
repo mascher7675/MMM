@@ -120,6 +120,12 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
   const [isEmailLoading, setIsEmailLoading] = useState(false)
   const [emailMessage, setEmailMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null)
   const [emailData, setEmailData] = useState({ newEmail: "", confirmEmail: "" })
+  // Independent from the password-change section's currentPassword/
+  // showCurrentPassword state above — this form is verified separately
+  // (see updateEmail's server-side re-auth) and shouldn't share state with
+  // an unrelated form the user might have partially filled in elsewhere.
+  const [emailCurrentPassword, setEmailCurrentPassword] = useState("")
+  const [showEmailCurrentPassword, setShowEmailCurrentPassword] = useState(false)
   const [emailUpdatedBanner, setEmailUpdatedBanner] = useState(false)
   const [emailLinkUsedBanner, setEmailLinkUsedBanner] = useState(false)
 
@@ -204,7 +210,10 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
     }
 
     setIsPasswordLoading(true)
-    const result = await updatePassword(passwordData.newPassword)
+    // currentPassword is re-verified server-side. The "verify" step above only
+    // gates the UI — updatePassword is a server action anyone with a session
+    // could POST to directly, so it can't trust that the step happened.
+    const result = await updatePassword(currentPassword, passwordData.newPassword)
     if (result.error) {
       setPasswordMessage({ type: "error", text: result.error })
     } else {
@@ -250,15 +259,20 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
       setEmailMessage({ type: "error", text: "New email must be different from your current email." })
       return
     }
+    if (!emailCurrentPassword.trim()) {
+      setEmailMessage({ type: "error", text: "Please enter your current password to confirm this change." })
+      return
+    }
 
     setIsEmailLoading(true)
-    const result = await updateEmail(trimmedNew)
+    const result = await updateEmail(emailCurrentPassword, trimmedNew)
     if (result.error) {
       setEmailMessage({ type: "error", text: result.error })
     } else {
       setPendingEmail(trimmedNew)
       setEmailStep("pending")
       setEmailData({ newEmail: "", confirmEmail: "" })
+      setEmailCurrentPassword("")
     }
     setIsEmailLoading(false)
   }
@@ -561,6 +575,30 @@ export function AccountSettings({ user, profile }: AccountSettingsProps) {
                       : "Emails do not match"}
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="emailCurrentPassword">Current Password</Label>
+                <div className="relative">
+                  <Input
+                    id="emailCurrentPassword"
+                    type={showEmailCurrentPassword ? "text" : "password"}
+                    value={emailCurrentPassword}
+                    onChange={(e) => setEmailCurrentPassword(e.target.value)}
+                    placeholder="Enter your current password to confirm"
+                    className="pr-10"
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEmailCurrentPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    tabIndex={-1}
+                    aria-label={showEmailCurrentPassword ? "Hide password" : "Show password"}
+                  >
+                    {showEmailCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               {emailMessage && (

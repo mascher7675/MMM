@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Loader2, MapPin } from "lucide-react"
 import { updateProfile } from "@/app/actions/profile"
 import { sendMessage } from "@/app/actions/messages"
-import { computeNextDeliveryDate } from "@/lib/delivery-utils"
+import { computeDeliveryDates } from "@/lib/delivery-utils"
 
 interface AddressFormData {
   firstName: string
@@ -22,6 +22,7 @@ interface AddressFormData {
   zip: string
   deliveryInstructions: string
   deliveryDay?: "thursday" | "friday"
+  deliveryDate?: string // YYYY-MM-DD — the exact delivery date the customer picked
 }
 
 interface CheckoutAddressFormProps {
@@ -71,13 +72,17 @@ const DELIVERABLE_ZIPS = [
 ]
 
 /**
- * Returns the next available delivery date for a given delivery day, as a
- * Date at local midnight — for DISPLAY ONLY.
+ * Returns the next TWO available delivery dates for a given delivery day —
+ * "this week's" and "next week's" occurrence — as Dates at local midnight,
+ * for DISPLAY ONLY. Each carries its own YYYY-MM-DD string, which is what
+ * actually gets submitted (see deliveryDate on AddressFormData) — the
+ * calendar date the customer clicked, not just the weekday.
  *
- * ⚠️ This MUST stay a thin wrapper over computeNextDeliveryDate() in
- * lib/delivery-utils.ts. That helper is the single source of truth, and it's
- * what app/actions/stripe.ts uses to stamp the actual delivery_date onto the
- * order after payment.
+ * ⚠️ This MUST stay a thin wrapper over computeDeliveryDates() in
+ * lib/delivery-utils.ts. That helper is the single source of truth for
+ * "next available" (it applies the same 5pm Eastern cutoff used everywhere
+ * else on the site, including app/actions/stripe.ts, which now honors this
+ * exact date — see the note on handleSubmit below).
  *
  * This file previously reimplemented the logic locally with a 10pm cutoff
  * (`CUTOFF_HOUR = 22`) read off the BROWSER's clock via now.getHours(),
@@ -88,12 +93,16 @@ const DELIVERABLE_ZIPS = [
  * Wednesday between 5pm and 10pm ET, or any customer on a non-Eastern
  * device). Do not reintroduce local date math here.
  */
-function getNextDeliveryDate(deliveryDay: "thursday" | "friday"): Date {
-  const [y, m, d] = computeNextDeliveryDate(deliveryDay).split("-").map(Number)
-  // Local midnight on that calendar date — safe for toLocaleDateString().
-  // (Never `new Date("YYYY-MM-DD")`, which parses as UTC and can render as
-  // the previous day for Eastern viewers.)
-  return new Date(y, m - 1, d)
+function getDeliveryDateOptions(
+  deliveryDay: "thursday" | "friday"
+): { date: Date; iso: string }[] {
+  return computeDeliveryDates(deliveryDay, 2).map((iso) => {
+    const [y, m, d] = iso.split("-").map(Number)
+    // Local midnight on that calendar date — safe for toLocaleDateString().
+    // (Never `new Date("YYYY-MM-DD")`, which parses as UTC and can render as
+    // the previous day for Eastern viewers.)
+    return { date: new Date(y, m - 1, d), iso }
+  })
 }
 
 /** Format a date as "Thursday, Feb 13" */
@@ -151,14 +160,20 @@ export function CheckoutAddressForm({
     deliveryInstructions: initialData?.deliveryInstructions || "",
   })
 
-  // Compute next available dates once on render (they won't change mid-session)
-  const nextThursday = getNextDeliveryDate("thursday")
-  const nextFriday = getNextDeliveryDate("friday")
+  // Compute the next two available dates per day once on render (won't change mid-session)
+  const thursdayDates = getDeliveryDateOptions("thursday") // [this week, next week]
+  const fridayDates = getDeliveryDateOptions("friday")
 
-  // Always show the soonest option first (left)
-  const deliveryOptions = [
-    { day: "thursday" as const, date: nextThursday },
-    { day: "friday" as const, date: nextFriday },
+  // This week's options, soonest first
+  const thisWeekOptions = [
+    { day: "thursday" as const, date: thursdayDates[0].date, iso: thursdayDates[0].iso },
+    { day: "friday" as const, date: fridayDates[0].date, iso: fridayDates[0].iso },
+  ].sort((a, b) => a.date.getTime() - b.date.getTime())
+
+  // Next week's options, same two weekdays, 7 days later
+  const nextWeekOptions = [
+    { day: "thursday" as const, date: thursdayDates[1].date, iso: thursdayDates[1].iso },
+    { day: "friday" as const, date: fridayDates[1].date, iso: fridayDates[1].iso },
   ].sort((a, b) => a.date.getTime() - b.date.getTime())
 
   const isCityDeliverable = (city: string, state: string): boolean => {
@@ -203,7 +218,7 @@ export function CheckoutAddressForm({
       return
     }
 
-    if (!formData.deliveryDay) {
+    if (!formData.deliveryDay || !formData.deliveryDate) {
       setError("Please select a delivery day")
       setIsLoading(false)
       return
@@ -480,29 +495,67 @@ export function CheckoutAddressForm({
         </Label>
         <p className="text-xs text-muted-foreground">
           {hasSubscriptionItems
-            ? "Your subscription will deliver on this day each week."
+            ? "Your subscription will deliver on this day each week. Picking a next-week date just delays your first delivery — every delivery after that follows your weekly day automatically."
             : "We deliver fresh, same-day on Thursdays and Fridays."}
         </p>
-        <div className="grid grid-cols-2 gap-3 pt-1">
-          {deliveryOptions.map(({ day, date }) => (
-            <button
-              key={day}
-              type="button"
-              onClick={() => setFormData({ ...formData, deliveryDay: day })}
-              className={`rounded-lg border-2 p-4 text-left transition-all ${
-                formData.deliveryDay === day
-                  ? "border-sage bg-sage/10"
-                  : "border-border hover:border-sage/50"
-              }`}
-            >
-              <p className="font-medium text-foreground">
-                {formatDeliveryDate(date)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {getCutoffNote(date)}
-              </p>
-            </button>
-          ))}
+        <div className="space-y-4 pt-1">
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              This week
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {thisWeekOptions.map(({ day, date, iso }) => (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() =>
+                    setFormData({ ...formData, deliveryDay: day, deliveryDate: iso })
+                  }
+                  className={`rounded-lg border-2 p-4 text-left transition-all ${
+                    formData.deliveryDate === iso
+                      ? "border-sage bg-sage/10"
+                      : "border-border hover:border-sage/50"
+                  }`}
+                >
+                  <p className="font-medium text-foreground">
+                    {formatDeliveryDate(date)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {getCutoffNote(date)}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Next week
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              {nextWeekOptions.map(({ day, date, iso }) => (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() =>
+                    setFormData({ ...formData, deliveryDay: day, deliveryDate: iso })
+                  }
+                  className={`rounded-lg border-2 p-4 text-left transition-all ${
+                    formData.deliveryDate === iso
+                      ? "border-sage bg-sage/10"
+                      : "border-border hover:border-sage/50"
+                  }`}
+                >
+                  <p className="font-medium text-foreground">
+                    {formatDeliveryDate(date)}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {getCutoffNote(date)}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 

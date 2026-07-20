@@ -7,7 +7,11 @@ import { stripe } from "@/lib/stripe"
 import { PRODUCTS } from "@/lib/products"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail } from "@/lib/email"
-import { computeNextDeliveryDate, cutoffUnixForDeliveryDate } from "@/lib/delivery-utils"
+import {
+  computeNextDeliveryDate,
+  computeDeliveryDates,
+  cutoffUnixForDeliveryDate,
+} from "@/lib/delivery-utils"
 
 interface CartItem {
   productId: string
@@ -46,15 +50,29 @@ interface CartItem {
 // Net guarantee: money always precedes milk. Skip/cancel before your
 // cutoff = no charge, no delivery. After the cutoff = charged, and the
 // paid delivery still goes out.
+//
+// ⚠️ UPDATE (checkout now offers "this week" or "next week" as an explicit
+// choice): the customer's FIRST delivery is no longer always "the very next
+// available Thursday/Friday" — it's whichever of the two dates shown on the
+// checkout page they clicked. That exact date is validated against
+// computeDeliveryDates() and stamped into session metadata as
+// `delivery_date`, and everything below that used to recompute "next
+// available" (the order's delivery_date, and the SECOND-delivery cutoff
+// used for trial_end) now reads that stamped date instead. Do not swap
+// those reads back to computeNextDeliveryDate() — that would silently
+// ignore the customer's "next week" choice and bill/deliver a week early.
 // ---------------------------------------------------------------------------
 
 /**
  * The cutoff gating the customer's SECOND delivery — where the first renewal
- * charge should land. First delivery is always the day after its own cutoff,
- * so the second delivery is first delivery + 7 days, and its cutoff is 5 PM
- * Eastern the evening before that. This lands 7–14 days out depending on
- * signup timing, which is fine for trial_end (unlike billing_cycle_anchor,
- * it has no 7-day cap).
+ * charge should land. The second delivery is always the customer's chosen
+ * FIRST delivery date + 7 days, and its cutoff is 5 PM Eastern the evening
+ * before that. This lands 7–14 days out depending on signup timing, which is
+ * fine for trial_end (unlike billing_cycle_anchor, it has no 7-day cap).
+ *
+ * Takes the customer's actual first delivery date (not just their weekday)
+ * so that choosing "next week" at checkout correctly pushes the SECOND
+ * delivery — and therefore the first renewal charge — out by a week too.
  *
  * DST-safe: delegates to cutoffUnixForDeliveryDate in lib/delivery-utils.ts,
  * the single source of truth for "what UTC instant is 5 PM Eastern the
@@ -67,9 +85,8 @@ interface CartItem {
  * an hour AFTER the skip window had already locked. Do not reintroduce a
  * fixed UTC offset here; see the notes in delivery-utils.ts.
  */
-function computeSecondCutoffUnix(deliveryDay: "thursday" | "friday"): number {
-  const firstDelivery = computeNextDeliveryDate(deliveryDay)
-  const [y, m, d] = firstDelivery.split("-").map(Number)
+function computeSecondCutoffUnix(firstDeliveryDate: string): number {
+  const [y, m, d] = firstDeliveryDate.split("-").map(Number)
 
   // Second delivery = first delivery + 7 days. Constructing a local Date and
   // reading the components back normalizes month/year overflow for us; only
@@ -95,7 +112,8 @@ export async function createCheckoutSession(
   cartItems: CartItem[],
   returnUrl: string,
   returnUrlSuffix: string = "",
-  deliveryDay?: string
+  deliveryDay?: string,
+  deliveryDate?: string // YYYY-MM-DD — exact date chosen on the checkout page
 ): Promise<{ clientSecret: string | null; error?: string }> {
   try {
     const supabase = await createClient()
@@ -112,6 +130,16 @@ export async function createCheckoutSession(
     }
 
     const day: "thursday" | "friday" = deliveryDay === "thursday" ? "thursday" : "friday"
+
+    // Trust nothing from the client beyond "did they pick a real option."
+    // The only two valid delivery dates for `day` right now are "this week"
+    // and "next week" — anything else (stale value, tampering, a session
+    // that's been sitting open across a cutoff) falls back to the current
+    // next-available date, which is exactly what checkout did before this
+    // feature existed.
+    const allowedDates = computeDeliveryDates(day, 2)
+    const validatedDeliveryDate =
+      deliveryDate && allowedDates.includes(deliveryDate) ? deliveryDate : allowedDates[0]
 
     const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = cartItems.map((item) => {
       const product = PRODUCTS.find((p) => p.id === item.productId)
@@ -152,6 +180,7 @@ export async function createCheckoutSession(
     }
     if (user) metadata.user_id = user.id
     if (deliveryDay) metadata.delivery_day = deliveryDay
+    metadata.delivery_date = validatedDeliveryDate
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       ui_mode: "embedded",
@@ -169,6 +198,7 @@ export async function createCheckoutSession(
       sessionParams.subscription_data = {
         metadata: {
           delivery_day: deliveryDay ?? "",
+          delivery_date: validatedDeliveryDate,
         },
       }
     }
@@ -232,10 +262,10 @@ export async function getCheckoutSession(sessionId: string) {
 // ---------------------------------------------------------------------------
 async function rescheduleRenewalToCutoff(
   stripeSubscriptionId: string,
-  deliveryDay: "thursday" | "friday"
+  firstDeliveryDate: string // the customer's actual, chosen first delivery date
 ): Promise<{ periodEnd: string | null; error: string | null }> {
   try {
-    const trialEnd = computeSecondCutoffUnix(deliveryDay)
+    const trialEnd = computeSecondCutoffUnix(firstDeliveryDate)
 
     const updated = await stripe.subscriptions.update(stripeSubscriptionId, {
       trial_end: trialEnd,
@@ -427,7 +457,18 @@ export async function saveOrderFromSession(sessionId: string) {
       ? new Date(session.created * 1000).toISOString()
       : new Date().toISOString()
 
-    const deliveryDate = computeNextDeliveryDate(deliveryDay)
+    // Prefer the exact date the customer picked at checkout (stamped into
+    // metadata by createCheckoutSession as `delivery_date`). Re-validate it
+    // against the two currently-allowed dates for this weekday and fall back
+    // to "next available" only if it's missing or no longer valid — e.g. an
+    // older in-flight session created before this metadata existed, or one
+    // that's been sitting open long enough to cross a cutoff.
+    const allowedDeliveryDates = computeDeliveryDates(deliveryDay, 2)
+    const metadataDeliveryDate = session.metadata?.delivery_date
+    const deliveryDate =
+      metadataDeliveryDate && allowedDeliveryDates.includes(metadataDeliveryDate)
+        ? metadataDeliveryDate
+        : computeNextDeliveryDate(deliveryDay)
 
     const placedAt = isSubscriptionMode
       ? new Date(deliveryDate + "T12:00:00").toISOString()
@@ -485,9 +526,11 @@ export async function saveOrderFromSession(sessionId: string) {
       }
 
       // 2. THEN move the renewal to the correct cutoff (Stripe-documented
-      //    trial_end method — see rescheduleRenewalToCutoff). Failure here
-      //    is logged CRITICALLY but doesn't block the order.
-      const reschedule = await rescheduleRenewalToCutoff(stripeSubIdForOrder, deliveryDay)
+      //    trial_end method — see rescheduleRenewalToCutoff), anchored to
+      //    the customer's ACTUAL first delivery date so a "next week" pick
+      //    correctly pushes the second delivery/charge out too. Failure
+      //    here is logged CRITICALLY but doesn't block the order.
+      const reschedule = await rescheduleRenewalToCutoff(stripeSubIdForOrder, deliveryDate)
       periodEnd = reschedule.periodEnd
     }
 

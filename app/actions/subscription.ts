@@ -17,11 +17,43 @@ import { PRODUCTS } from "@/lib/products"
 import { sendMessage } from "@/app/actions/messages"
 import { sendSubscriptionCancelledEmail } from "@/lib/email"
  
-// Base URL for redirects (Stripe billing portal return_url)
+/**
+ * Base URL for redirects (Stripe billing portal return_url).
+ *
+ * ⚠️ DEPLOYMENT: this reads NEXT_PUBLIC_APP_URL, which is a DIFFERENT variable
+ * from the NEXT_PUBLIC_SITE_URL that app/actions/auth.ts uses. Both must be set
+ * in the deployment environment; setting only one leaves the other silently
+ * pointing at localhost. (lib/email.ts also reads NEXT_PUBLIC_APP_URL, with its
+ * own hardcoded https://modernmilkmaid.store fallback — a third answer to the
+ * same question.)
+ *
+ * This used to fall back to "http://localhost:3000/account" unconditionally
+ * (note: port 3000, while auth.ts guessed 4000 — the fallbacks didn't even
+ * agree with each other). In production that URL goes to Stripe as the billing
+ * portal's return_url, so a missing env var meant customers managing their
+ * subscription got dumped on localhost when they clicked "Return to Modern Milk
+ * Maid" — with nothing logged and nothing erroring.
+ *
+ * Now it throws in production rather than handing Stripe a dead link, and keeps
+ * the localhost convenience only in dev.
+ *
+ * NOTE: NEXT_PUBLIC_* values are inlined at BUILD time, so this must be present
+ * in the build environment, not just at runtime.
+ */
 function getAccountUrl(): string {
-  if (typeof process.env.NEXT_PUBLIC_APP_URL === "string" && process.env.NEXT_PUBLIC_APP_URL) {
-    return `${process.env.NEXT_PUBLIC_APP_URL}/account`
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL
+
+  if (typeof appUrl === "string" && appUrl) {
+    return `${appUrl.replace(/\/+$/, "")}/account`
   }
+
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "NEXT_PUBLIC_APP_URL is not set. Refusing to hand Stripe a localhost " +
+        "return_url. Set NEXT_PUBLIC_APP_URL in the deployment environment."
+    )
+  }
+
   return "http://localhost:3000/account"
 }
  
@@ -70,7 +102,7 @@ function computeCutoffUnixForNextDelivery(deliveryDay: "thursday" | "friday"): n
 // If we only updated Supabase, Stripe would keep charging on the OLD
 // weekday forever — silently breaking the "charge, then deliver the next
 // day" guarantee for every future week. isDeliveryDayChangeLocked() already
-// blocks changes during the Wed 5PM–Fri 3PM window that covers both
+// blocks changes during the Wed 5PM–Fri noon window that covers both
 // cutoffs, so whenever this function is actually allowed to run, the
 // customer's next pending charge hasn't fired yet and is safe to move by
 // the ±1 day gap between Thursday's and Friday's cutoffs — proration is
@@ -85,10 +117,10 @@ export async function updateDeliveryDay(
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     if (userError || !user) return { error: "Not authenticated", nextDeliveryDate: null }
  
-    // Reject if we're in the Wednesday 5 PM – Friday 3 PM lock window
+    // Reject if we're in the Wednesday 5 PM – Friday noon lock window
     if (isDeliveryDayChangeLocked()) {
       return {
-        error: "Delivery day changes are locked from Wednesday at 5 PM until Friday at 3 PM. Please try again after Friday at 3 PM.",
+        error: "Delivery day changes are locked from Wednesday at 5 PM until Friday at noon. Please try again after Friday noon.",
         nextDeliveryDate: null,
       }
     }
@@ -735,7 +767,7 @@ export async function swapSubscriptionMilk(
     // Check milk-change lock (same 5 PM EST cutoff)
     const deliveryDay = sub.delivery_day as "thursday" | "friday"
     if (isSkipLocked(deliveryDay)) {
-      return { error: "Milk type changes are locked from 5 PM the evening before delivery until 3 PM on delivery day." }
+      return { error: "Milk type changes are locked from 5 PM the evening before delivery until noon on delivery day." }
     }
  
     // Look up the new product

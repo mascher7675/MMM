@@ -1,5 +1,5 @@
 //lib/cart-context.tsx
- 
+
 "use client"
  
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
@@ -66,8 +66,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
       )
       
       if (existingIndex >= 0) {
+        // Previously: `updated[existingIndex].quantity += ...`. That copies
+        // the ARRAY but not the item objects inside it — updated[i] is the
+        // exact same object reference as current[i]. Harmless in a single
+        // production render, but React 18 StrictMode intentionally invokes
+        // state updaters twice in dev to surface exactly this class of bug:
+        // the first pass mutates the shared object, the second pass reads
+        // the already-mutated value as its "before" state and mutates again,
+        // so adding one existing item bumps its quantity by 2 locally (server
+        // state / a real checkout are unaffected — this is a display-only
+        // dev artifact). Spreading the item, not just the array, makes the
+        // update immutable so StrictMode's double-invoke is a no-op.
         const updated = [...current]
-        updated[existingIndex].quantity += newItem.quantity || 1
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          quantity: updated[existingIndex].quantity + (newItem.quantity || 1),
+        }
         return updated
       }
       

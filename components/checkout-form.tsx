@@ -31,6 +31,7 @@ interface AddressData {
   zip: string
   deliveryInstructions: string
   deliveryDay?: "thursday" | "friday"
+  deliveryDate?: string // YYYY-MM-DD — the exact delivery date the customer picked
 }
 
 interface CheckoutFormProps {
@@ -113,12 +114,14 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
       // restored from sessionStorage asynchronously. Fall back to reading
       // sessionStorage directly here as a safety net.
       let deliveryDay = addressData?.deliveryDay
-      if (!deliveryDay && phase === "one_time") {
+      let deliveryDate = addressData?.deliveryDate
+      if ((!deliveryDay || !deliveryDate) && phase === "one_time") {
         try {
           const stored = sessionStorage.getItem(ADDRESS_STORAGE_KEY)
           if (stored) {
             const parsed: AddressData = JSON.parse(stored)
-            deliveryDay = parsed.deliveryDay
+            deliveryDay = deliveryDay ?? parsed.deliveryDay
+            deliveryDate = deliveryDate ?? parsed.deliveryDate
           }
         } catch {
           // ignore
@@ -129,7 +132,8 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
         cartItemsPayload,
         window.location.origin,
         returnUrlSuffix,
-        deliveryDay   // ← delivery day correctly flows into session metadata
+        deliveryDay,   // ← delivery day correctly flows into session metadata
+        deliveryDate   // ← the exact chosen delivery date (this week / next week)
       )
 
       if (result.error || !result.clientSecret) {

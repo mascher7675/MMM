@@ -31,6 +31,35 @@ export async function updateProfile({
   try {
     const supabase = await createClient()
 
+    // Verify the caller IS the user they claim to be.
+    //
+    // `userId` arrives from the client and this is a server action — a public
+    // HTTP endpoint — so it's an unauthenticated claim. Cross-user writes are
+    // already blocked by the profiles_update_own RLS policy (auth.uid() = id),
+    // which is what makes this safe rather than critical. But relying on RLS
+    // alone has a nasty failure mode: a blocked UPDATE matches zero rows, and
+    // updating zero rows is NOT an error. Supabase returns { error: null }, so
+    // this function reported success and the settings page cheerfully said
+    // "Profile updated successfully!" while nothing had been written.
+    //
+    // The realistic victim isn't an attacker, it's an ordinary customer whose
+    // session expired in another tab: they edit their address, get a green
+    // success message, and silently lose the change. Checking here means a
+    // mismatch says so out loud, and RLS becomes defence-in-depth rather than
+    // the only thing standing between us and a lie.
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return { error: "Your session has expired. Please sign in again." }
+    }
+
+    if (user.id !== userId) {
+      console.error(
+        `updateProfile: caller ${user.id} attempted to update profile ${userId}`
+      )
+      return { error: "You can only update your own profile." }
+    }
+
     const { error } = await supabase
       .from("profiles")
       .update({

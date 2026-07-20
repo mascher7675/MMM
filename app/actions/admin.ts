@@ -56,6 +56,8 @@ export interface AdminCustomer {
   role: string
   is_cash_customer: boolean
   route_position: number | null
+  /** Thursday: route_position (above). Friday: this. See migration 018. */
+  route_position_friday: number | null
   admin_notes: string | null
   created_at: string
 }
@@ -394,6 +396,47 @@ export async function deleteCashCustomer(
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
+
+    // Clean up subscriptions BEFORE deleting the profile.
+    //
+    // There is no foreign key from subscriptions/subscription_items back to
+    // profiles (confirmed against the live schema), so deleting only the
+    // profile row left any subscription this cash customer had completely
+    // orphaned: invisible cruft, not a recoverable "Deleted Customer" record
+    // like orders get. getAdminSubscriptions actively filters these out
+    // (`.filter((s) => profileMap[s.user_id])`), so an admin had no way to
+    // even see, let alone clean up, a leftover row — it just sat in the
+    // database forever.
+    //
+    // Cash-customer subscriptions never carry a stripe_subscription_id (cash
+    // customers have no Stripe billing), so there is nothing to cancel on
+    // Stripe's side — a straight delete is safe and complete. This does NOT
+    // touch orders: those are deliberately preserved and surface in the
+    // Orders tab as "Deleted Customer" with their own cleanup flow
+    // (deleteOrphanedOrder), which stays unchanged.
+    const { data: subs, error: subsFetchError } = await supabase
+      .from("subscriptions")
+      .select("id")
+      .eq("user_id", customerId)
+
+    if (subsFetchError) return { error: subsFetchError.message }
+
+    const subIds = (subs ?? []).map((s) => s.id)
+
+    if (subIds.length > 0) {
+      const { error: itemsDeleteError } = await supabase
+        .from("subscription_items")
+        .delete()
+        .in("subscription_id", subIds)
+      if (itemsDeleteError) return { error: itemsDeleteError.message }
+
+      const { error: subsDeleteError } = await supabase
+        .from("subscriptions")
+        .delete()
+        .in("id", subIds)
+      if (subsDeleteError) return { error: subsDeleteError.message }
+    }
+
     const { error } = await supabase
       .from("profiles")
       .delete()
@@ -883,15 +926,23 @@ export async function addSubscriptionToCashCustomer(
 // Delivery Route Ordering
 // ---------------------------------------------------------------------------
 export async function saveRouteOrder(
-  orderedCustomerIds: string[]
+  orderedCustomerIds: string[],
+  deliveryDay: "thursday" | "friday"
 ): Promise<{ error: string | null }> {
   try {
     const { supabase } = await requireAdmin()
 
+    // Thursday and Friday routes have independent orderings (see migration
+    // 018_add_friday_route_position). This used to always write
+    // route_position regardless of which day's sheet was being reordered, so
+    // a customer who ships on both days had their Thursday position silently
+    // overwritten every time the Friday route was reordered, and vice versa.
+    const column = deliveryDay === "friday" ? "route_position_friday" : "route_position"
+
     const updates = orderedCustomerIds.map((id, index) =>
       supabase
         .from("profiles")
-        .update({ route_position: index, updated_at: new Date().toISOString() })
+        .update({ [column]: index, updated_at: new Date().toISOString() })
         .eq("id", id)
     )
 
@@ -1630,11 +1681,21 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
     const { data: profiles } = allUserIds.length > 0
       ? await supabase
           .from("profiles")
-          .select("id, first_name, last_name, address, city, zip, delivery_instructions, phone, is_cash_customer, route_position, admin_notes")
+          .select("id, first_name, last_name, address, city, zip, delivery_instructions, phone, is_cash_customer, route_position, route_position_friday, admin_notes")
           .in("id", allUserIds)
       : { data: [] }
 
     const profileMap = Object.fromEntries((profiles ?? []).map((p) => [p.id, p]))
+
+    // Thursday and Friday routes have independent manual orderings (see
+    // migration 018_add_friday_route_position and saveRouteOrder above).
+    // Both partial-stop builders below need "this profile's position on
+    // THIS call's route sheet" — pick the column once here rather than
+    // repeating the ternary at each of the two call sites.
+    const routePositionFor = (
+      p: { route_position: number | null; route_position_friday: number | null } | undefined
+    ): number | null =>
+      deliveryDay === "friday" ? (p?.route_position_friday ?? null) : (p?.route_position ?? null)
 
     type PartialStop = {
       customerId: string
@@ -1694,7 +1755,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           })),
           sourceId: s.id,
           isCashCustomer: p?.is_cash_customer ?? false,
-          routePosition: p?.route_position ?? null,
+          routePosition: routePositionFor(p),
           isOneTime: false,
         })
       })
@@ -1719,7 +1780,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           })),
           sourceId: o.id,
           isCashCustomer: p?.is_cash_customer ?? false,
-          routePosition: p?.route_position ?? null,
+          routePosition: routePositionFor(p),
           isOneTime: true,
         })
       })

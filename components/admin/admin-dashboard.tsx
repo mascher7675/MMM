@@ -26,7 +26,23 @@ export function AdminDashboard({ adminName, stats, customers, orders, subscripti
 
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: "overview",      label: "Overview",      icon: <TrendingUp className="h-4 w-4" /> },
-    { id: "orders",        label: "Orders",        icon: <ShoppingBag className="h-4 w-4" />, badge: orders.filter(o => o.delivery_state === "pending").length },
+    {
+      id: "orders",
+      label: "Orders",
+      icon: <ShoppingBag className="h-4 w-4" />,
+      // create_weekly_delivery_order hardcodes delivery_state = 'pending' on
+      // EVERY weekly order row it creates — including skipped ones — and
+      // nothing ever advances it for a skipped delivery (orders-tab hides the
+      // delivery-state buttons entirely once status === "skipped", so there's
+      // no path for it to become anything else). A skipped delivery is never
+      // "out for delivery" or "delivered" because nothing ships, so it isn't
+      // truly pending either — counting it here would inflate this badge with
+      // deliveries that will never need action. Currently 0 rows are affected
+      // (no skip has yet survived to invoice.created since launch), but the
+      // skip-state migration fix means that WILL start happening, so this is
+      // fixed ahead of the first real occurrence rather than after.
+      badge: orders.filter(o => o.delivery_state === "pending" && o.status !== "skipped").length,
+    },
     {
       id: "subscriptions",
       label: "Subscriptions",
