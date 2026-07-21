@@ -2,12 +2,12 @@
 
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Loader2, MapPin } from "lucide-react"
+import { Loader2, MapPin, ChevronDown, Check } from "lucide-react"
 import { updateProfile } from "@/app/actions/profile"
 import { sendMessage } from "@/app/actions/messages"
 import { computeDeliveryDates } from "@/lib/delivery-utils"
@@ -148,6 +148,22 @@ export function CheckoutAddressForm({
   const [error, setError] = useState<string | null>(null)
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [requestSubmitted, setRequestSubmitted] = useState(false)
+  const [isDayPickerOpen, setIsDayPickerOpen] = useState(false)
+  const dayPickerRef = useRef<HTMLDivElement>(null)
+
+  // Close the delivery-day dropdown when clicking outside it
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        dayPickerRef.current &&
+        !dayPickerRef.current.contains(e.target as Node)
+      ) {
+        setIsDayPickerOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
 
   const [formData, setFormData] = useState<AddressFormData>({
     firstName: initialData?.firstName || "",
@@ -505,39 +521,97 @@ export function CheckoutAddressForm({
             ? "Your subscription will deliver on this day each week. Picking a next-week date just delays your first delivery — every delivery after that follows your weekly day automatically."
             : "We deliver fresh, same-day on Thursdays and Fridays between 1pm to 5pm."}
         </p>
-        <select
-          id="deliveryDate"
-          required
-          value={formData.deliveryDate || ""}
-          onChange={(e) => {
-            const iso = e.target.value
-            const match = allDateOptions.find((o) => o.iso === iso)
-            setFormData({
-              ...formData,
-              deliveryDate: iso,
-              deliveryDay: match?.day,
-            })
-          }}
-          className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage focus-visible:ring-offset-2"
-        >
-          <option value="" disabled>
-            Select a delivery date
-          </option>
-          <optgroup label="This week">
-            {thisWeekOptions.map(({ date, iso }) => (
-              <option key={iso} value={iso}>
-                {formatDeliveryDate(date)}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Next week">
-            {nextWeekOptions.map(({ date, iso }) => (
-              <option key={iso} value={iso}>
-                {formatDeliveryDate(date)}
-              </option>
-            ))}
-          </optgroup>
-        </select>
+        <div className="relative" ref={dayPickerRef}>
+          <button
+            type="button"
+            onClick={() => setIsDayPickerOpen((open) => !open)}
+            className={`flex h-11 w-full items-center justify-between rounded-lg border bg-background px-3 text-sm transition-colors ${
+              isDayPickerOpen
+                ? "border-sage ring-2 ring-sage/20"
+                : "border-border hover:border-sage/50"
+            }`}
+          >
+            <span
+              className={
+                selectedDateOption
+                  ? "text-foreground"
+                  : "text-muted-foreground"
+              }
+            >
+              {selectedDateOption
+                ? formatDeliveryDate(selectedDateOption.date)
+                : "Select a delivery date"}
+            </span>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform ${
+                isDayPickerOpen ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+
+          {isDayPickerOpen && (
+            <div className="absolute z-10 mt-1.5 w-full overflow-hidden rounded-lg border border-border bg-background shadow-md">
+              <p className="px-3 pt-2.5 pb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                This week
+              </p>
+              {thisWeekOptions.map(({ date, iso }) => (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => {
+                    const match = allDateOptions.find((o) => o.iso === iso)
+                    setFormData({
+                      ...formData,
+                      deliveryDate: iso,
+                      deliveryDay: match?.day,
+                    })
+                    setIsDayPickerOpen(false)
+                  }}
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-sage/10 ${
+                    formData.deliveryDate === iso
+                      ? "text-sage"
+                      : "text-foreground"
+                  }`}
+                >
+                  {formatDeliveryDate(date)}
+                  {formData.deliveryDate === iso && (
+                    <Check className="h-4 w-4" />
+                  )}
+                </button>
+              ))}
+
+              <p className="px-3 pt-2.5 pb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground border-t border-border">
+                Next week
+              </p>
+              {nextWeekOptions.map(({ date, iso }) => (
+                <button
+                  key={iso}
+                  type="button"
+                  onClick={() => {
+                    const match = allDateOptions.find((o) => o.iso === iso)
+                    setFormData({
+                      ...formData,
+                      deliveryDate: iso,
+                      deliveryDay: match?.day,
+                    })
+                    setIsDayPickerOpen(false)
+                  }}
+                  className={`flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-sage/10 ${
+                    formData.deliveryDate === iso
+                      ? "text-sage"
+                      : "text-foreground"
+                  }`}
+                >
+                  {formatDeliveryDate(date)}
+                  {formData.deliveryDate === iso && (
+                    <Check className="h-4 w-4" />
+                  )}
+                </button>
+              ))}
+              <div className="pb-1" />
+            </div>
+          )}
+        </div>
         {selectedDateOption && (
           <p className="text-xs text-muted-foreground">
             {getCutoffNote(selectedDateOption.date)}
