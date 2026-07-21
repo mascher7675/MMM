@@ -169,7 +169,7 @@ export default function AboutPage() {
               />
             </div>
 
-            <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mt-10 grid gap-8 sm:grid-cols-2">
               {milks.map((milk) => (
                 <div
                   key={milk.name}
