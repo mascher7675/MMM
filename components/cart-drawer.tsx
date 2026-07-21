@@ -1,5 +1,5 @@
 //components/cart-drawer.tsx
- 
+
 "use client"
  
 import { useCart } from "@/lib/cart-context"
@@ -15,16 +15,11 @@ import Image from "next/image"
 import Link from "next/link"
  
 export function CartDrawer() {
-  const { items, isOpen, setIsOpen, removeItem, updateQuantity, totalPriceInCents, totalItems, isLoaded } = useCart()
+  const { items, isOpen, setIsOpen, removeItem, updateQuantity, totalPriceInCents, totalItems } = useCart()
  
   const formatPrice = (cents: number) => {
     return `$${(cents / 100).toFixed(2)}`
   }
- 
-  // Don't render cart contents until localStorage has been read on the client.
-  // This prevents the server-rendered empty cart from mismatching the
-  // client-hydrated cart, which is the most common source of hydration errors.
-  if (!isLoaded) return null
  
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
@@ -69,7 +64,7 @@ export function CartDrawer() {
                       />
                     </div>
                     <div className="flex flex-1 flex-col">
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start justify-between gap-2">
                         <div>
                           <h4 className="font-medium text-foreground">{item.name}</h4>
                           <p className="text-sm text-muted-foreground">{item.size}</p>
@@ -81,7 +76,8 @@ export function CartDrawer() {
                         </div>
                         <button
                           onClick={() => removeItem(item.productId, item.isSubscription)}
-                          className="text-muted-foreground transition-colors hover:text-destructive"
+                          className="-mr-1 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-destructive"
+                          aria-label={`Remove ${item.name} from cart`}
                         >
                           <X className="h-4 w-4" />
                         </button>
@@ -90,16 +86,18 @@ export function CartDrawer() {
                         <div className="flex items-center gap-2">
                           <button
                             onClick={() => updateQuantity(item.productId, item.quantity - 1, item.isSubscription)}
-                            className="flex h-7 w-7 items-center justify-center rounded-full border border-border transition-colors hover:bg-secondary"
+                            className="flex h-8 w-8 items-center justify-center rounded-full border border-border transition-colors hover:bg-secondary"
+                            aria-label="Decrease quantity"
                           >
-                            <Minus className="h-3 w-3" />
+                            <Minus className="h-3.5 w-3.5" />
                           </button>
                           <span className="w-6 text-center text-sm font-medium">{item.quantity}</span>
                           <button
                             onClick={() => updateQuantity(item.productId, item.quantity + 1, item.isSubscription)}
-                            className="flex h-7 w-7 items-center justify-center rounded-full border border-border transition-colors hover:bg-secondary"
+                            className="flex h-8 w-8 items-center justify-center rounded-full border border-border transition-colors hover:bg-secondary"
+                            aria-label="Increase quantity"
                           >
-                            <Plus className="h-3 w-3" />
+                            <Plus className="h-3.5 w-3.5" />
                           </button>
                         </div>
                         <p className="font-medium text-foreground">
@@ -119,7 +117,7 @@ export function CartDrawer() {
               </div>
               
               <p className="px-2 text-center text-xs text-muted-foreground">
-                Delivery included
+                (Delivery included & tax free)
               </p>
               
               <div className="space-y-3 px-2">
@@ -143,7 +141,7 @@ export function CartDrawer() {
 }
  
 export function CartButton() {
-  const { setIsOpen, totalItems, isLoaded } = useCart()
+  const { setIsOpen, totalItems } = useCart()
  
   return (
     <button
@@ -152,7 +150,7 @@ export function CartButton() {
       aria-label="Open cart"
     >
       <ShoppingBag className="h-5 w-5" />
-      {isLoaded && totalItems > 0 && (
+      {totalItems > 0 && (
         <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-sage text-xs font-medium text-sage-foreground">
           {totalItems > 9 ? "9+" : totalItems}
         </span>

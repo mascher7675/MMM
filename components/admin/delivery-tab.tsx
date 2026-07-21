@@ -215,7 +215,7 @@ export function DeliveryTab() {
     <div className="space-y-6">
       <div>
         <p className="mb-3 text-sm font-medium text-muted-foreground">Select delivery day to generate route list:</p>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           {sortedDeliveryDays.map(d => (
             <button
               key={d}
@@ -233,7 +233,7 @@ export function DeliveryTab() {
           <button
             onClick={load}
             disabled={loading}
-            className="ml-auto flex items-center gap-2 rounded-lg bg-[#7C9885] px-4 py-2 text-sm font-medium text-white hover:bg-[#6a8673] disabled:opacity-50 transition-colors"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#7C9885] px-4 py-2 text-sm font-medium text-white hover:bg-[#6a8673] disabled:opacity-50 transition-colors sm:ml-auto sm:w-auto"
           >
             {loading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
             Load {day.charAt(0).toUpperCase() + day.slice(1)} Deliveries
@@ -247,11 +247,11 @@ export function DeliveryTab() {
 
       {loaded && !error && (
         <>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="font-serif text-xl font-medium capitalize">
               {day} Deliveries · {deliveryDates[day].toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
             </h2>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <span className="rounded-full bg-[#7C9885]/10 px-3 py-1 text-sm font-medium text-[#7C9885]">
                 {list.length} stop{list.length !== 1 ? "s" : ""}
               </span>

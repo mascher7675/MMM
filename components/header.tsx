@@ -160,15 +160,16 @@ export function Header() {
           </Button>
         </div>
  
-        <div className="flex items-center gap-4 lg:hidden">
+        {/* Mobile controls — buttons sized to a 44px tap target for thumbs */}
+        <div className="flex items-center gap-1 lg:hidden">
           <button
             onClick={() => setIsOpen(true)}
-            className="relative flex cursor-pointer items-center justify-center text-foreground outline-none"
+            className="relative flex h-11 w-11 cursor-pointer items-center justify-center text-foreground outline-none"
             aria-label="Open cart"
           >
             <ShoppingBag className="h-5 w-5" />
             {totalItems > 0 && (
-              <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-sage text-xs font-medium text-sage-foreground">
+              <span className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-sage text-xs font-medium text-sage-foreground">
                 {totalItems > 9 ? "9+" : totalItems}
               </span>
             )}
@@ -177,6 +178,8 @@ export function Header() {
             type="button"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             aria-label="Toggle menu"
+            aria-expanded={mobileMenuOpen}
+            className="flex h-11 w-11 items-center justify-center text-foreground outline-none"
           >
             {mobileMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
           </button>
@@ -185,23 +188,23 @@ export function Header() {
  
       {mobileMenuOpen && (
         <div className="border-t border-border/50 bg-background px-4 py-6 lg:hidden">
-          <nav className="flex flex-col gap-4">
-            <Link href="/subscribe" className="text-sm font-medium tracking-wide text-foreground" onClick={() => setMobileMenuOpen(false)}>
+          <nav className="flex flex-col gap-1">
+            <Link href="/subscribe" className="rounded-md py-3 text-sm font-medium tracking-wide text-foreground transition-colors hover:bg-accent" onClick={() => setMobileMenuOpen(false)}>
               Subscribe
             </Link>
-            <Link href="/shop" className="text-sm font-medium tracking-wide text-foreground" onClick={() => setMobileMenuOpen(false)}>
+            <Link href="/shop" className="rounded-md py-3 text-sm font-medium tracking-wide text-foreground transition-colors hover:bg-accent" onClick={() => setMobileMenuOpen(false)}>
               Shop
             </Link>
-            <Link href="/about" className="text-sm font-medium tracking-wide text-foreground" onClick={() => setMobileMenuOpen(false)}>
+            <Link href="/about" className="rounded-md py-3 text-sm font-medium tracking-wide text-foreground transition-colors hover:bg-accent" onClick={() => setMobileMenuOpen(false)}>
               About
             </Link>
-            <Link href="/#how-it-works" className="text-sm font-medium tracking-wide text-foreground" onClick={() => setMobileMenuOpen(false)}>
+            <Link href="/#how-it-works" className="rounded-md py-3 text-sm font-medium tracking-wide text-foreground transition-colors hover:bg-accent" onClick={() => setMobileMenuOpen(false)}>
               How It Works
             </Link>
-            <Link href="/#contact" className="text-sm font-medium tracking-wide text-foreground" onClick={() => setMobileMenuOpen(false)}>
+            <Link href="/#contact" className="rounded-md py-3 text-sm font-medium tracking-wide text-foreground transition-colors hover:bg-accent" onClick={() => setMobileMenuOpen(false)}>
               Contact
             </Link>
-            <div className="flex flex-col gap-3 border-t border-border/50 pt-4">
+            <div className="mt-3 flex flex-col gap-3 border-t border-border/50 pt-4">
               {isAdmin && (
                 <Button variant="outline" asChild className="w-full border-[#7C9885]/30 bg-[#7C9885]/5 text-[#7c9885]">
                   <Link href="/admin" onClick={() => setMobileMenuOpen(false)}>
@@ -225,7 +228,7 @@ export function Header() {
                 </Button>
               )}
               <Button asChild className="w-full bg-foreground text-background hover:bg-foreground/90">
-                <Link href="/subscribe">Start Subscription</Link>
+                <Link href="/subscribe" onClick={() => setMobileMenuOpen(false)}>Start Subscription</Link>
               </Button>
             </div>
           </nav>

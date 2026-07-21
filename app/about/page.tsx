@@ -158,14 +158,16 @@ export default function AboutPage() {
               </p>
             </div>
 
-            {/* Decorative illustration */}
+            {/* Decorative illustration — cap width to the container so it never
+                exceeds the viewport (h-64 w-auto forced a ~640px width that
+                overflowed on phones and caused sideways page scroll). */}
             <div className="mt-10 flex justify-center">
               <Image
                 src="/images/big-jars.jpg"
                 alt="Mason jar illustration"
                 width={1000}
                 height={400}
-                className="h-64 w-auto opacity-80"
+                className="h-auto w-full max-w-2xl object-contain opacity-80"
               />
             </div>
 

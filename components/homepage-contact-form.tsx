@@ -164,8 +164,8 @@ export function HomepageContactForm() {
               </div>
             )}
 
-            {/* First name / Last name */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* First name / Last name — stack on the narrowest phones */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <Input
                   placeholder="First name"
@@ -190,8 +190,8 @@ export function HomepageContactForm() {
               </div>
             </div>
 
-            {/* Email / Phone */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Email / Phone — stack on the narrowest phones */}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <Input
                   type="text"
