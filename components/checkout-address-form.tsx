@@ -23,7 +23,6 @@ interface AddressFormData {
   deliveryInstructions: string
   deliveryDay?: "thursday" | "friday"
   deliveryDate?: string // YYYY-MM-DD — the exact delivery date the customer picked
-  jarCollectionInterest?: boolean // whether the customer wants jar collection on their next delivery
 }
 
 interface CheckoutAddressFormProps {
@@ -159,7 +158,6 @@ export function CheckoutAddressForm({
     state: initialData?.state || "NY",
     zip: initialData?.zip || "",
     deliveryInstructions: initialData?.deliveryInstructions || "",
-    jarCollectionInterest: initialData?.jarCollectionInterest ?? false,
   })
 
   // Compute the next two available dates per day once on render (won't change mid-session)
@@ -177,6 +175,13 @@ export function CheckoutAddressForm({
     { day: "thursday" as const, date: thursdayDates[1].date, iso: thursdayDates[1].iso },
     { day: "friday" as const, date: fridayDates[1].date, iso: fridayDates[1].iso },
   ].sort((a, b) => a.date.getTime() - b.date.getTime())
+
+  // Flat list for the dropdown, plus a lookup for the currently selected date
+  // (used to look up the weekday when saving, and to render the cutoff note).
+  const allDateOptions = [...thisWeekOptions, ...nextWeekOptions]
+  const selectedDateOption = allDateOptions.find(
+    (o) => o.iso === formData.deliveryDate
+  )
 
   const isCityDeliverable = (city: string, state: string): boolean => {
     const normalizedCity = city.trim()
@@ -245,15 +250,6 @@ export function CheckoutAddressForm({
       return
     }
 
-    // Fold the jar collection preference into the instructions we actually
-    // persist, without touching the visible textarea the customer typed in.
-    const jarCollectionNote = formData.jarCollectionInterest
-      ? "Interested in jar collection for next delivery."
-      : ""
-    const combinedInstructions = [formData.deliveryInstructions, jarCollectionNote]
-      .filter(Boolean)
-      .join(" ")
-
     if (userId) {
       const result = await updateProfile({
         userId,
@@ -264,7 +260,7 @@ export function CheckoutAddressForm({
         city: formData.city,
         state: formData.state,
         zip: formData.zip,
-        deliveryInstructions: combinedInstructions,
+        deliveryInstructions: formData.deliveryInstructions,
       })
 
       if (result.error) {
@@ -275,7 +271,7 @@ export function CheckoutAddressForm({
     }
 
     setIsLoading(false)
-    onComplete({ ...formData, deliveryInstructions: combinedInstructions })
+    onComplete(formData)
   }
 
   const handleRequestDelivery = async () => {
@@ -507,67 +503,46 @@ export function CheckoutAddressForm({
         <p className="text-xs text-muted-foreground">
           {hasSubscriptionItems
             ? "Your subscription will deliver on this day each week. Picking a next-week date just delays your first delivery — every delivery after that follows your weekly day automatically."
-            : "We deliver fresh, same-day on Thursdays and Fridays."}
+            : "We deliver fresh, same-day on Thursdays and Fridays between 1pm to 5pm."}
         </p>
-        <div className="space-y-4 pt-1">
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              This week
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              {thisWeekOptions.map(({ day, date, iso }) => (
-                <button
-                  key={iso}
-                  type="button"
-                  onClick={() =>
-                    setFormData({ ...formData, deliveryDay: day, deliveryDate: iso })
-                  }
-                  className={`rounded-lg border-2 p-4 text-left transition-all ${
-                    formData.deliveryDate === iso
-                      ? "border-sage bg-sage/10"
-                      : "border-border hover:border-sage/50"
-                  }`}
-                >
-                  <p className="font-medium text-foreground">
-                    {formatDeliveryDate(date)}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {getCutoffNote(date)}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Next week
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              {nextWeekOptions.map(({ day, date, iso }) => (
-                <button
-                  key={iso}
-                  type="button"
-                  onClick={() =>
-                    setFormData({ ...formData, deliveryDay: day, deliveryDate: iso })
-                  }
-                  className={`rounded-lg border-2 p-4 text-left transition-all ${
-                    formData.deliveryDate === iso
-                      ? "border-sage bg-sage/10"
-                      : "border-border hover:border-sage/50"
-                  }`}
-                >
-                  <p className="font-medium text-foreground">
-                    {formatDeliveryDate(date)}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {getCutoffNote(date)}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <select
+          id="deliveryDate"
+          required
+          value={formData.deliveryDate || ""}
+          onChange={(e) => {
+            const iso = e.target.value
+            const match = allDateOptions.find((o) => o.iso === iso)
+            setFormData({
+              ...formData,
+              deliveryDate: iso,
+              deliveryDay: match?.day,
+            })
+          }}
+          className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sage focus-visible:ring-offset-2"
+        >
+          <option value="" disabled>
+            Select a delivery date
+          </option>
+          <optgroup label="This week">
+            {thisWeekOptions.map(({ date, iso }) => (
+              <option key={iso} value={iso}>
+                {formatDeliveryDate(date)}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Next week">
+            {nextWeekOptions.map(({ date, iso }) => (
+              <option key={iso} value={iso}>
+                {formatDeliveryDate(date)}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+        {selectedDateOption && (
+          <p className="text-xs text-muted-foreground">
+            {getCutoffNote(selectedDateOption.date)}
+          </p>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -583,40 +558,6 @@ export function CheckoutAddressForm({
           placeholder="e.g., Leave on front porch, Gate code is 1234"
           rows={3}
         />
-        <p className="text-xs text-muted-foreground">
-          Deliveries arrive between 1pm and 5pm. If you won't be home, we recommend leaving an ice-packed cooler near your door to keep your milk fresh and cool.
-        </p>
-      </div>
-
-      <div className="space-y-2">
-        <Label>Jar Collection</Label>
-        <p className="text-xs text-muted-foreground">
-          Interested in jar collection for your next delivery?
-        </p>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setFormData({ ...formData, jarCollectionInterest: true })}
-            className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
-              formData.jarCollectionInterest
-                ? "border-sage bg-sage/10 font-medium text-sage"
-                : "border-border bg-background text-muted-foreground hover:border-sage/50"
-            }`}
-          >
-            Yes, please
-          </button>
-          <button
-            type="button"
-            onClick={() => setFormData({ ...formData, jarCollectionInterest: false })}
-            className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
-              !formData.jarCollectionInterest
-                ? "border-sage bg-sage/10 font-medium text-sage"
-                : "border-border bg-background text-muted-foreground hover:border-sage/50"
-            }`}
-          >
-            Not this time
-          </button>
-        </div>
       </div>
 
       <Button type="submit" className="w-full" disabled={isLoading}>
