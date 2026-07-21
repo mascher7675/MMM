@@ -1,10 +1,10 @@
 //components/products-preview.tsx
- 
+
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { ArrowRight } from "lucide-react"
- 
+
 const milks = [
   {
     name: "Oat Milk",
@@ -31,7 +31,7 @@ const milks = [
     price: "From $12",
   },
 ]
- 
+
 export function ProductsPreview() {
   return (
     <section className="bg-background py-20 md:py-28">
@@ -45,7 +45,7 @@ export function ProductsPreview() {
               Fresh Plant-Based Milks
             </h2>
             <p className="mt-2 max-w-lg text-muted-foreground">
-              Handcrafted weekly in small batches using simple, quality ingredients.
+              Handcrafted daily in small batches using simple, quality ingredients.
             </p>
           </div>
           <Button variant="link" asChild className="gap-2 px-0 text-foreground">
@@ -54,7 +54,7 @@ export function ProductsPreview() {
             </Link>
           </Button>
         </div>
- 
+
         <div className="mt-12 grid gap-6 sm:grid-cols-2 md:grid-cols-4">
           {milks.map((milk) => (
             <Link

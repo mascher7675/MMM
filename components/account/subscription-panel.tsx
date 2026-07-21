@@ -31,6 +31,7 @@ import {
   Plus,
   SkipForward,
   Truck,
+  Recycle,
 } from "lucide-react"
 import {
   updateDeliveryDay,
@@ -41,6 +42,7 @@ import {
   swapSubscriptionMilk,
   skipWeeklyDelivery,
   unskipWeeklyDelivery,
+  toggleJarCollectionInterest,
 } from "@/app/actions/subscription"
 import { isSkipLocked, isDeliveryDayChangeLocked, computeDeliveryDates, isDeliveryDayMorning } from "@/lib/delivery-utils"
 import { PRODUCTS } from "@/lib/products"
@@ -68,6 +70,7 @@ export interface Subscription {
   final_delivery_date: string | null
   stripe_subscription_id: string | null
   skipped_dates: string[] | null
+  jar_collection_interest: boolean | null
   subscription_items: SubscriptionItem[]
 }
  
@@ -363,8 +366,8 @@ function SingleSubscriptionCard({
   const [dayUpdateSuccess, setDayUpdateSuccess] = useState(false)
   const [reactivateSuccess, setReactivateSuccess] = useState(false)
  
-  const [openSection, setOpenSection] = useState<"order" | "milk" | "delivery" | "skip" | null>(null)
-  function toggleSection(section: "order" | "milk" | "delivery" | "skip") {
+  const [openSection, setOpenSection] = useState<"order" | "milk" | "delivery" | "skip" | "jars" | null>(null)
+  function toggleSection(section: "order" | "milk" | "delivery" | "skip" | "jars") {
     setOpenSection((prev) => (prev === section ? null : section))
   }
  
@@ -388,6 +391,14 @@ function SingleSubscriptionCard({
   const [localSkippedDates, setLocalSkippedDates] = useState<string[]>(
     (subscription.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
   )
+
+  // Local optimistic state for jar collection interest, plus its own
+  // pending/success flags — same pattern as the delivery-day save button.
+  const [jarCollectionInterest, setJarCollectionInterest] = useState(
+    Boolean(subscription.jar_collection_interest)
+  )
+  const [isSavingJarPreference, setIsSavingJarPreference] = useState(false)
+  const [jarPreferenceError, setJarPreferenceError] = useState<string | null>(null)
  
   // Client-only state to avoid hydration errors
   const [todayISO, setTodayISO] = useState<string | null>(null)
@@ -583,6 +594,20 @@ function SingleSubscriptionCard({
     setLocalSkippedDates((prev) =>
       nowSkipped ? [...prev, date].sort() : prev.filter((d) => d !== date)
     )
+  }
+
+  async function handleJarCollectionToggle(interested: boolean) {
+    if (interested === jarCollectionInterest || isSavingJarPreference) return
+    const previous = jarCollectionInterest
+    setJarCollectionInterest(interested) // optimistic
+    setIsSavingJarPreference(true)
+    setJarPreferenceError(null)
+    const result = await toggleJarCollectionInterest(activeSubscription.id, interested)
+    setIsSavingJarPreference(false)
+    if (result.error) {
+      setJarCollectionInterest(previous) // revert on failure
+      setJarPreferenceError(result.error)
+    }
   }
  
   // ── Delivery date calculations ────────────────────────────────────────────
@@ -985,6 +1010,56 @@ function SingleSubscriptionCard({
                 {dayUpdateSuccess ? "Delivery day updated!" : "Save Delivery Day"}
               </Button>
             </div>
+          </div>
+        </CollapsibleRow>
+
+        {/* Jar collection */}
+        <CollapsibleRow
+          icon={<Recycle className="h-4 w-4" />}
+          label="Jar Collection"
+          sublabel={jarCollectionInterest ? "Requested for next delivery" : "Not requested"}
+          open={openSection === "jars"}
+          onToggle={() => toggleSection("jars")}
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Interested in jar collection on your next delivery? Toggle this anytime — it applies to your very next delivery, and stays on for every delivery after that until you turn it off.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => handleJarCollectionToggle(true)}
+                disabled={isSavingJarPreference}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+                  jarCollectionInterest
+                    ? "border-sage bg-sage/10 font-medium text-sage cursor-pointer"
+                    : "border-border bg-background text-muted-foreground hover:border-sage/50 cursor-pointer"
+                }`}
+              >
+                Yes, please
+              </button>
+              <button
+                type="button"
+                onClick={() => handleJarCollectionToggle(false)}
+                disabled={isSavingJarPreference}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all disabled:cursor-not-allowed disabled:opacity-60 ${
+                  !jarCollectionInterest
+                    ? "border-sage bg-sage/10 font-medium text-sage cursor-pointer"
+                    : "border-border bg-background text-muted-foreground hover:border-sage/50 cursor-pointer"
+                }`}
+              >
+                Not this time
+              </button>
+            </div>
+            {isSavingJarPreference && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Saving…
+              </p>
+            )}
+            {jarPreferenceError && (
+              <p className="text-xs text-destructive">{jarPreferenceError}</p>
+            )}
           </div>
         </CollapsibleRow>
       </div>

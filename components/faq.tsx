@@ -20,7 +20,15 @@ const faqs = [
   },
   {
     question: "How long does the milk stay fresh?",
-    answer: "Our milks stay fresh for 7-10 days when refrigerated. With weekly delivery, you will always have the freshest milk possible.",
+    answer: "Our milks stay fresh for 6 days when refrigerated. With weekly delivery, you will always have the freshest milk possible.",
+  },
+  {
+    question: "What if I won't be home during delivery?",
+    answer: "Deliveries arrive between 1pm and 5pm. If you won't be home, we recommend leaving an ice-packed cooler near your door so your milk stays fresh and cool until you get to it.",
+  },
+  {
+    question: "Do you use any allergens in your facility?",
+    answer: "All of our products are made in a facility that handles milk, wheat, eggs, and nuts.",
   },
   {
     question: "Can I pause or cancel my subscription?",

@@ -10,7 +10,7 @@ const milks = [
   {
     name: "Oat Milk",
     tagline: "Creamy & Naturally Sweet",
-    description: "Our oat milk is made from locally sourced oats, crafted to be perfectly creamy with a natural sweetness. It's the ideal choice for your morning coffee, smoothies, or baking. Rich in fiber and beta-glucans, it's as nutritious as it is delicious.",
+    description: "Our oat milk is crafted to be perfectly creamy with a natural sweetness. It's the ideal choice for your morning coffee, smoothies, or baking. Rich in fiber and beta-glucans, it's as nutritious as it is delicious. Isn't made with locally grown oats (yet) — but it is Organic.",
     highlights: ["Perfect for coffee", "Naturally creamy", "Rich in fiber"],
     sizes: [
       { size: "16oz", price: "$12" },

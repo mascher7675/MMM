@@ -23,6 +23,7 @@ interface AddressFormData {
   deliveryInstructions: string
   deliveryDay?: "thursday" | "friday"
   deliveryDate?: string // YYYY-MM-DD — the exact delivery date the customer picked
+  jarCollectionInterest?: boolean // whether the customer wants jar collection on their next delivery
 }
 
 interface CheckoutAddressFormProps {
@@ -158,6 +159,7 @@ export function CheckoutAddressForm({
     state: initialData?.state || "NY",
     zip: initialData?.zip || "",
     deliveryInstructions: initialData?.deliveryInstructions || "",
+    jarCollectionInterest: initialData?.jarCollectionInterest ?? false,
   })
 
   // Compute the next two available dates per day once on render (won't change mid-session)
@@ -243,6 +245,15 @@ export function CheckoutAddressForm({
       return
     }
 
+    // Fold the jar collection preference into the instructions we actually
+    // persist, without touching the visible textarea the customer typed in.
+    const jarCollectionNote = formData.jarCollectionInterest
+      ? "Interested in jar collection for next delivery."
+      : ""
+    const combinedInstructions = [formData.deliveryInstructions, jarCollectionNote]
+      .filter(Boolean)
+      .join(" ")
+
     if (userId) {
       const result = await updateProfile({
         userId,
@@ -253,7 +264,7 @@ export function CheckoutAddressForm({
         city: formData.city,
         state: formData.state,
         zip: formData.zip,
-        deliveryInstructions: formData.deliveryInstructions,
+        deliveryInstructions: combinedInstructions,
       })
 
       if (result.error) {
@@ -264,7 +275,7 @@ export function CheckoutAddressForm({
     }
 
     setIsLoading(false)
-    onComplete(formData)
+    onComplete({ ...formData, deliveryInstructions: combinedInstructions })
   }
 
   const handleRequestDelivery = async () => {
@@ -572,6 +583,40 @@ export function CheckoutAddressForm({
           placeholder="e.g., Leave on front porch, Gate code is 1234"
           rows={3}
         />
+        <p className="text-xs text-muted-foreground">
+          Deliveries arrive between 1pm and 5pm. If you won't be home, we recommend leaving an ice-packed cooler near your door to keep your milk fresh and cool.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Jar Collection</Label>
+        <p className="text-xs text-muted-foreground">
+          Interested in jar collection for your next delivery?
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setFormData({ ...formData, jarCollectionInterest: true })}
+            className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
+              formData.jarCollectionInterest
+                ? "border-sage bg-sage/10 font-medium text-sage"
+                : "border-border bg-background text-muted-foreground hover:border-sage/50"
+            }`}
+          >
+            Yes, please
+          </button>
+          <button
+            type="button"
+            onClick={() => setFormData({ ...formData, jarCollectionInterest: false })}
+            className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
+              !formData.jarCollectionInterest
+                ? "border-sage bg-sage/10 font-medium text-sage"
+                : "border-border bg-background text-muted-foreground hover:border-sage/50"
+            }`}
+          >
+            Not this time
+          </button>
+        </div>
       </div>
 
       <Button type="submit" className="w-full" disabled={isLoading}>

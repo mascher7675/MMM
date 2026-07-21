@@ -32,6 +32,7 @@ interface AddressData {
   deliveryInstructions: string
   deliveryDay?: "thursday" | "friday"
   deliveryDate?: string // YYYY-MM-DD — the exact delivery date the customer picked
+  jarCollectionInterest?: boolean // whether the customer wants jar collection on their next delivery
 }
 
 interface CheckoutFormProps {

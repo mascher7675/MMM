@@ -21,7 +21,7 @@ export function Footer() {
               />
             </Link>
             <p className="mt-6 max-w-xs text-sm leading-relaxed text-background/70">
-              Fresh, local non-dairy milk delivered weekly to the North Fork of Long Island. 
+              Fresh, local plant based milk delivered weekly to the North Fork of Long Island. 
               Made with love, delivered with care.
             </p>
             <div className="mt-6 flex items-center gap-3">
@@ -110,7 +110,7 @@ export function Footer() {
                   className="flex items-center gap-3 text-sm text-background/80 transition-colors hover:text-sage"
                 >
                   <Mail className="h-4 w-4 shrink-0 text-sage" />
-                  hello@modernmilkmaid.store
+                  Modernmilkmaidpb@gmail.com
                 </a>
               </li>
               <li>

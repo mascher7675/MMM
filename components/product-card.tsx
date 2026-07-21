@@ -1,21 +1,21 @@
 //components/product-card.tsx
- 
+
 "use client"
- 
+
 import { useState } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { useCart } from "@/lib/cart-context"
 import { Check } from "lucide-react"
 import { PRODUCTS } from "@/lib/products"
- 
+
 interface ProductCardProps {
   milkType: "oat" | "almond" | "hemp" | "cashew"
   isSubscription: boolean
   /** Override the accent color. Defaults to the milkType's natural color. */
   accentColor?: "green" | "blue"
 }
- 
+
 export function ProductCard({ milkType, isSubscription, accentColor }: ProductCardProps) {
   const productsForType = PRODUCTS.filter(p => p.milkType === milkType)
   const [selectedSize, setSelectedSize] = useState<"16oz" | "32oz">("16oz")
@@ -26,25 +26,25 @@ export function ProductCard({ milkType, isSubscription, accentColor }: ProductCa
   const product32 = productsForType.find(p => p.size === "32oz")
   
   if (!product16 || !product32) return null
- 
+
   const selectedProduct = selectedSize === "16oz" ? product16 : product32
   const price = isSubscription ? selectedProduct.subscriptionPriceInCents : selectedProduct.priceInCents
   const weeklyPrice = isSubscription ? selectedProduct.priceInCents : null
   const monthlyPrice = weeklyPrice ? weeklyPrice * 4 : null
- 
+
   // Natural color per milk type (mobile default): oat=green, almond=blue, hemp=green, cashew=blue
   const naturalColor: "green" | "blue" = 
     milkType === "almond" || milkType === "cashew" ? "blue" : "green"
- 
+
   const color = accentColor ?? naturalColor
- 
+
   const borderClass       = color === "green" ? "border-sage/20 hover:border-sage/40"  : "border-blue/20 hover:border-blue/40"
   const buttonClass       = color === "green" ? "bg-sage text-sage-foreground hover:bg-sage/90" : "bg-blue text-blue-foreground hover:bg-blue/90"
   const sizeActiveClass   = color === "green" ? "border-sage bg-sage/10 text-sage font-medium"  : "border-blue bg-blue/10 text-blue font-medium"
   const sizeInactiveClass = color === "green"
     ? "border-border bg-background text-muted-foreground hover:border-sage/50"
     : "border-border bg-background text-muted-foreground hover:border-blue/50"
- 
+
   const handleAddToCart = () => {
     addItem({
       productId: selectedProduct.id,
@@ -58,7 +58,7 @@ export function ProductCard({ milkType, isSubscription, accentColor }: ProductCa
     setJustAdded(true)
     setTimeout(() => setJustAdded(false), 2000)
   }
- 
+
   return (
     <div className={`group flex h-full flex-col overflow-hidden rounded-lg border bg-card transition-all ${borderClass}`}>
       {/* Image */}
@@ -70,16 +70,29 @@ export function ProductCard({ milkType, isSubscription, accentColor }: ProductCa
           className="object-cover transition-transform duration-300 group-hover:scale-105"
         />
       </div>
- 
+
       {/* Content */}
       <div className="flex flex-1 flex-col p-5">
         <h3 className="font-serif text-xl font-medium text-foreground">
-          {selectedProduct.name.split(' - ')[0]}
+          {selectedProduct.name.split(' - ')[0]} Delivery
         </h3>
         <p className="mt-1 text-sm text-muted-foreground">
           {selectedProduct.description}
         </p>
- 
+
+        {(milkType === "almond" || milkType === "cashew") && (
+          <p className="mt-1 text-xs italic text-muted-foreground/70">
+            Contains nuts.
+          </p>
+        )}
+
+        <p className="mt-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Ingredients
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          {selectedProduct.ingredients.join(", ")}.
+        </p>
+
         {/* Size Selection — mt-auto pushes everything below the description to the bottom */}
         <div className="mt-auto pt-4">
           <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -110,7 +123,7 @@ export function ProductCard({ milkType, isSubscription, accentColor }: ProductCa
             </button>
           </div>
         </div>
- 
+
         {/* Price and Add Button */}
         <div className="mt-5">
           {isSubscription ? (

@@ -741,6 +741,41 @@ export async function reactivateSubscription(
 }
  
 // ---------------------------------------------------------------------------
+// Toggle jar collection interest
+//
+// A lightweight preference, not a delivery-affecting change — no cutoff/lock
+// window applies, unlike skip/delivery-day changes above. It's read by
+// whoever assembles the driver's route sheet for the customer's NEXT
+// delivery, so toggling it any time before that delivery goes out is fine.
+// ---------------------------------------------------------------------------
+export async function toggleJarCollectionInterest(
+  subscriptionId: string,
+  interested: boolean
+): Promise<{ error: string | null }> {
+  try {
+    const supabase = await createClient()
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) return { error: "Not authenticated" }
+
+    const { error } = await supabase
+      .from("subscriptions")
+      .update({
+        jar_collection_interest: interested,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", subscriptionId)
+      .eq("user_id", user.id)
+
+    if (error) return { error: error.message }
+
+    revalidatePath("/account")
+    return { error: null }
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "Failed to update jar collection preference" }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Swap subscription milk type
 // ---------------------------------------------------------------------------
 export async function swapSubscriptionMilk(

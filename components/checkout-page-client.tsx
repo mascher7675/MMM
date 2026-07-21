@@ -18,6 +18,7 @@ interface AddressData {
   state: string
   zip: string
   deliveryInstructions: string
+  jarCollectionInterest?: boolean
 }
 
 interface CheckoutPageClientProps {
