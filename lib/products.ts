@@ -101,7 +101,7 @@ export const PRODUCTS: Product[] = [
     ingredients: ["Organic Cashews", "Filtered Water", "Organic Dates", "Homemade Vanilla Extract", "Salt"],
     priceInCents: 1200,
     subscriptionPriceInCents: 1200,
-    image: "/images/closeup-emilywithjar.jpg",
+    image: "/images/2jars-home.jpg",
   },
   {
     id: "cashew-32oz",
@@ -112,7 +112,7 @@ export const PRODUCTS: Product[] = [
     ingredients: ["Organic Cashews", "Filtered Water", "Organic Dates", "Homemade Vanilla Extract", "Salt"],
     priceInCents: 1800,
     subscriptionPriceInCents: 1800,
-    image: "/images/closeup-emilywithjar.jpg",
+    image: "/images/2jars-home.jpg",
   },
 ]
 

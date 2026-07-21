@@ -80,12 +80,6 @@ export function ProductCard({ milkType, isSubscription, accentColor }: ProductCa
           {selectedProduct.description}
         </p>
 
-        {(milkType === "almond" || milkType === "cashew") && (
-          <p className="mt-1 text-xs italic text-muted-foreground/70">
-            Contains nuts.
-          </p>
-        )}
-
         <p className="mt-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Ingredients
         </p>

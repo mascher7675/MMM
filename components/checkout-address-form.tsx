@@ -180,13 +180,18 @@ export function CheckoutAddressForm({
   const thursdayDates = getDeliveryDateOptions("thursday") // [this week, next week]
   const fridayDates = getDeliveryDateOptions("friday")
 
-  // This week's options, soonest first
+  // The two soonest upcoming dates (one per weekday), soonest first.
+  // NOTE: these are NOT necessarily in the same calendar week — e.g. on a
+  // Thursday morning, the soonest Thursday slot is already 7 days out (today's
+  // cutoff has passed) while the soonest Friday slot is tomorrow. Labeled
+  // "Soonest" in the UI rather than "This week" for exactly this reason.
   const thisWeekOptions = [
     { day: "thursday" as const, date: thursdayDates[0].date, iso: thursdayDates[0].iso },
     { day: "friday" as const, date: fridayDates[0].date, iso: fridayDates[0].iso },
   ].sort((a, b) => a.date.getTime() - b.date.getTime())
 
-  // Next week's options, same two weekdays, 7 days later
+  // The next two dates after that (one per weekday), same reasoning applies —
+  // labeled "Later" in the UI, not "Next week".
   const nextWeekOptions = [
     { day: "thursday" as const, date: thursdayDates[1].date, iso: thursdayDates[1].iso },
     { day: "friday" as const, date: fridayDates[1].date, iso: fridayDates[1].iso },
@@ -552,7 +557,7 @@ export function CheckoutAddressForm({
           {isDayPickerOpen && (
             <div className="absolute z-10 mt-1.5 w-full overflow-hidden rounded-lg border border-border bg-background shadow-md">
               <p className="px-3 pt-2.5 pb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                This week
+                Soonest
               </p>
               {thisWeekOptions.map(({ date, iso }) => (
                 <button
@@ -581,7 +586,7 @@ export function CheckoutAddressForm({
               ))}
 
               <p className="px-3 pt-2.5 pb-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground border-t border-border">
-                Next week
+                Later
               </p>
               {nextWeekOptions.map(({ date, iso }) => (
                 <button
