@@ -21,6 +21,7 @@ const milks = [
     name: "Almond Milk",
     tagline: "Light & Nutty",
     description: "Our classic almond milk offers a light, refreshing taste with subtle nutty undertones. Made from carefully selected almonds, it's lower in calories and perfect for those seeking a lighter option. Great on its own, in cereal, or as a dairy-free cooking base.",
+    note: "Contains nuts.",
     highlights: ["Lower in calories", "Subtle flavor", "Versatile use"],
     sizes: [
       { size: "16oz", price: "$12" },
@@ -32,6 +33,17 @@ const milks = [
     tagline: "Nutritious & Earthy",
     description: "Our hemp seed milk is a nutritional powerhouse, packed with omega-3 and omega-6 fatty acids, plus all essential amino acids. With its earthy, wholesome flavor, it's perfect for health enthusiasts looking to add more plant-based nutrition to their diet.",
     highlights: ["Omega fatty acids", "Complete protein", "Heart-healthy"],
+    sizes: [
+      { size: "16oz", price: "$12" },
+      { size: "32oz", price: "$18" },
+    ],
+  },
+  {
+    name: "Cashew Milk",
+    tagline: "Rich & Velvety Smooth",
+    description: "Our cashew milk is rich and velvety smooth, with a naturally buttery flavor. It's a wonderful choice for lattes, soups, and creamy sauces where you want a little extra body.",
+    note: "Contains nuts.",
+    highlights: ["Naturally buttery", "Velvety texture", "Great in lattes"],
     sizes: [
       { size: "16oz", price: "$12" },
       { size: "32oz", price: "$18" },
@@ -157,7 +169,7 @@ export default function AboutPage() {
               />
             </div>
 
-            <div className="mt-10 grid gap-8 md:grid-cols-3">
+            <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
               {milks.map((milk) => (
                 <div
                   key={milk.name}
@@ -175,6 +187,11 @@ export default function AboutPage() {
                   <p className="mt-4 text-sm text-muted-foreground leading-relaxed">
                     {milk.description}
                   </p>
+                  {milk.note && (
+                    <p className="mt-1 text-xs italic text-muted-foreground/70">
+                      {milk.note}
+                    </p>
+                  )}
                   <ul className="mt-6 space-y-2">
                     {milk.highlights.map((highlight) => (
                       <li key={highlight} className="flex items-center gap-2 text-sm text-muted-foreground">
