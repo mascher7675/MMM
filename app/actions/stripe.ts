@@ -113,7 +113,8 @@ export async function createCheckoutSession(
   returnUrl: string,
   returnUrlSuffix: string = "",
   deliveryDay?: string,
-  deliveryDate?: string // YYYY-MM-DD — exact date chosen on the checkout page
+  deliveryDate?: string, // YYYY-MM-DD — exact date chosen on the checkout page
+  jarCollectionInterest?: boolean // whether to collect empty jars on this delivery
 ): Promise<{ clientSecret: string | null; error?: string }> {
   try {
     const supabase = await createClient()
@@ -181,6 +182,9 @@ export async function createCheckoutSession(
     if (user) metadata.user_id = user.id
     if (deliveryDay) metadata.delivery_day = deliveryDay
     metadata.delivery_date = validatedDeliveryDate
+    // Stamp the jar-collection choice so saveOrderFromSession can persist it
+    // onto the order (and, for subscriptions, onto the subscription).
+    metadata.jar_collection = jarCollectionInterest ? "true" : "false"
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       ui_mode: "embedded",
@@ -199,6 +203,7 @@ export async function createCheckoutSession(
         metadata: {
           delivery_day: deliveryDay ?? "",
           delivery_date: validatedDeliveryDate,
+          jar_collection: jarCollectionInterest ? "true" : "false",
         },
       }
     }
@@ -453,6 +458,9 @@ export async function saveOrderFromSession(sessionId: string) {
     const deliveryDay = (session.metadata?.delivery_day || "friday") as "thursday" | "friday"
     const isSubscriptionMode = session.mode === "subscription"
 
+    // Whether the customer asked for empty-jar collection on this delivery.
+    const jarCollectionInterest = session.metadata?.jar_collection === "true"
+
     const purchasedAt = session.created
       ? new Date(session.created * 1000).toISOString()
       : new Date().toISOString()
@@ -567,6 +575,7 @@ export async function saveOrderFromSession(sessionId: string) {
         stripe_receipt_url: receiptUrl,
         delivery_date: deliveryDate,
         delivery_state: "pending",
+        jar_collection: jarCollectionInterest,
         placed_at: placedAt,
         created_at: purchasedAt,
         updated_at: purchasedAt,
@@ -614,6 +623,9 @@ export async function saveOrderFromSession(sessionId: string) {
           cancel_at_period_end: false,
           current_period_end: periodEnd,
           skipped_dates: [],
+          // Persist the checkout choice as the standing preference the
+          // subscription panel reads/writes.
+          jar_collection_interest: jarCollectionInterest,
           created_at: purchasedAt,
           updated_at: purchasedAt,
         })

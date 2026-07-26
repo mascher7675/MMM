@@ -77,6 +77,7 @@ export interface AdminOrder {
   delivery_zip: string | null
   delivery_state: string | null
   delivery_date: string | null
+  jar_collection: boolean
   admin_notes: string | null
   placed_at: string | null
   created_at: string

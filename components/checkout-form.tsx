@@ -113,16 +113,23 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
 
       // For the one_time phase after a redirect, addressData may have just been
       // restored from sessionStorage asynchronously. Fall back to reading
-      // sessionStorage directly here as a safety net.
+      // sessionStorage directly here as a safety net. jar_collection rides
+      // along on the same stored object as the delivery fields.
       let deliveryDay = addressData?.deliveryDay
       let deliveryDate = addressData?.deliveryDate
-      if ((!deliveryDay || !deliveryDate) && phase === "one_time") {
+      let jarCollectionInterest = addressData?.jarCollectionInterest
+      if (
+        (!deliveryDay || !deliveryDate || jarCollectionInterest === undefined) &&
+        phase === "one_time"
+      ) {
         try {
           const stored = sessionStorage.getItem(ADDRESS_STORAGE_KEY)
           if (stored) {
             const parsed: AddressData = JSON.parse(stored)
             deliveryDay = deliveryDay ?? parsed.deliveryDay
             deliveryDate = deliveryDate ?? parsed.deliveryDate
+            jarCollectionInterest =
+              jarCollectionInterest ?? parsed.jarCollectionInterest
           }
         } catch {
           // ignore
@@ -134,7 +141,8 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
         window.location.origin,
         returnUrlSuffix,
         deliveryDay,   // ← delivery day correctly flows into session metadata
-        deliveryDate   // ← the exact chosen delivery date (this week / next week)
+        deliveryDate,  // ← the exact chosen delivery date (this week / next week)
+        jarCollectionInterest ?? false // ← jar-collection preference for this delivery
       )
 
       if (result.error || !result.clientSecret) {

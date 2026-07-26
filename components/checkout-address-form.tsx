@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Loader2, MapPin, ChevronDown, Check } from "lucide-react"
+import { Loader2, MapPin, ChevronDown, Check, Recycle } from "lucide-react"
 import { updateProfile } from "@/app/actions/profile"
 import { sendMessage } from "@/app/actions/messages"
 import { computeDeliveryDates } from "@/lib/delivery-utils"
@@ -23,6 +23,7 @@ interface AddressFormData {
   deliveryInstructions: string
   deliveryDay?: "thursday" | "friday"
   deliveryDate?: string // YYYY-MM-DD — the exact delivery date the customer picked
+  jarCollectionInterest?: boolean // whether the customer wants empty jars collected on this delivery
 }
 
 interface CheckoutAddressFormProps {
@@ -174,6 +175,8 @@ export function CheckoutAddressForm({
     state: initialData?.state || "NY",
     zip: initialData?.zip || "",
     deliveryInstructions: initialData?.deliveryInstructions || "",
+    // Seed from the customer's existing preference so a prior "yes" stays on.
+    jarCollectionInterest: initialData?.jarCollectionInterest ?? false,
   })
 
   // Compute the next two available dates per day once on render (won't change mid-session)
@@ -622,6 +625,46 @@ export function CheckoutAddressForm({
             {getCutoffNote(selectedDateOption.date)}
           </p>
         )}
+      </div>
+
+      {/* Jar Collection — optional, applies to this delivery */}
+      <div className="space-y-2">
+        <Label className="flex items-center gap-1.5">
+          <Recycle className="h-4 w-4 text-sage" />
+          Jar Collection
+        </Label>
+        <p className="text-xs text-muted-foreground">
+          Want us to collect your empty jars on this delivery? We&apos;ll grab them from
+          wherever you leave your delivery.
+        </p>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              setFormData({ ...formData, jarCollectionInterest: true })
+            }
+            className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
+              formData.jarCollectionInterest
+                ? "border-sage bg-sage/10 font-medium text-sage"
+                : "border-border bg-background text-muted-foreground hover:border-sage/50"
+            }`}
+          >
+            Yes, please
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setFormData({ ...formData, jarCollectionInterest: false })
+            }
+            className={`flex-1 rounded-md border px-3 py-2 text-sm transition-all ${
+              !formData.jarCollectionInterest
+                ? "border-sage bg-sage/10 font-medium text-sage"
+                : "border-border bg-background text-muted-foreground hover:border-sage/50"
+            }`}
+          >
+            Not this time
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2">

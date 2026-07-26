@@ -24,6 +24,35 @@ export default async function CheckoutPage() {
       .eq("id", user.id)
       .maybeSingle()
 
+    // Seed the jar-collection toggle from the customer's existing preference so
+    // a prior "yes" stays on. Prefer their active subscription's standing
+    // preference; fall back to whatever their most recent order had.
+    let jarCollectionInterest = false
+    const { data: activeSub } = await supabase
+      .from("subscriptions")
+      .select("jar_collection_interest")
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (activeSub?.jar_collection_interest != null) {
+      jarCollectionInterest = activeSub.jar_collection_interest
+    } else {
+      const { data: lastOrder } = await supabase
+        .from("orders")
+        .select("jar_collection")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (lastOrder?.jar_collection != null) {
+        jarCollectionInterest = lastOrder.jar_collection
+      }
+    }
+
     if (profile) {
       initialAddress = {
         firstName: profile.first_name || "",
@@ -34,7 +63,11 @@ export default async function CheckoutPage() {
         state: profile.state || "NY",
         zip: profile.zip || "",
         deliveryInstructions: profile.delivery_instructions || "",
+        jarCollectionInterest,
       }
+    } else {
+      // No saved profile yet, but still carry the preference through.
+      initialAddress = { jarCollectionInterest }
     }
   }
 

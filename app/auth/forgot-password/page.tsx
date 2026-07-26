@@ -36,16 +36,13 @@ export default function ForgotPasswordPage() {
     setLoading(true)
     const supabase = createClient()
 
-    const siteUrl =
-      process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:4000"
-
     // redirectTo must go through /auth/callback so the token_hash is exchanged
     // for a session before the user reaches the reset-password form.
     // The callback route detects type=recovery and forwards to /auth/reset-password.
     const { error: resetError } = await supabase.auth.resetPasswordForEmail(
       email.trim().toLowerCase(),
       {
-        redirectTo: `${siteUrl}/auth/callback?next=/auth/reset-password`,
+        redirectTo: `${window.location.origin}/auth/callback?next=/auth/reset-password`,
       }
     )
 

@@ -3,7 +3,7 @@
 
 import { useState, useTransition, useEffect } from "react"
 import { createPortal } from "react-dom"
-import { ChevronDown, ChevronUp, MapPin, Check, Package, ChevronLeft, ChevronRight, XCircle, RefreshCw, ExternalLink, Search, X, Trash2, AlertTriangle, CalendarDays } from "lucide-react"
+import { ChevronDown, ChevronUp, MapPin, Check, Package, ChevronLeft, ChevronRight, XCircle, RefreshCw, ExternalLink, Search, X, Trash2, AlertTriangle, CalendarDays, Recycle } from "lucide-react"
 
 import {
   updateOrderStatus,
@@ -236,6 +236,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
     filter === "cash"         ? o.is_cash_customer === true :
     filter === "online"       ? o.is_cash_customer === false :
     filter === "skipped"      ? o.status === "skipped" :
+    filter === "jars"         ? o.jar_collection === true :
     (o.delivery_state) === filter
   )
 
@@ -276,7 +277,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
 
       {/* ── Filter pills ── */}
       <div className="flex flex-wrap gap-2">
-        {["all", "pending", "out_for_delivery", "delivered", "subscription", "one_time", "skipped", "cash", "online"].map((f) => (
+        {["all", "pending", "out_for_delivery", "delivered", "subscription", "one_time", "skipped", "jars", "cash", "online"].map((f) => (
           <button
             key={f}
             onClick={() => changeFilter(f)}
@@ -288,6 +289,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
           >
             {f === "out_for_delivery" ? "Out for Delivery" :
              f === "one_time" ? "One Time" :
+             f === "jars" ? "Jar Collection" :
              f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
@@ -375,6 +377,12 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                       )}
                     </>
                   )}
+                  {order.jar_collection && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 text-[10px] font-medium text-sage">
+                      <Recycle className="h-3 w-3" />
+                      Jars
+                    </span>
+                  )}
                 </div>
 
                 <div className="mt-0.5 text-xs text-muted-foreground flex flex-wrap items-center gap-x-1">
@@ -439,7 +447,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                     <div className="flex flex-wrap gap-2">
                       {isSubscription ? (
                         order.stripe_subscription_id && (
-                          <a
+                          
                             href={`https://dashboard.stripe.com/subscriptions/${order.stripe_subscription_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -451,7 +459,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                         )
                       ) : (
                         order.stripe_payment_intent_id ? (
-                          <a
+                          
                             href={`https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -461,7 +469,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                             View Payment
                           </a>
                         ) : order.stripe_session_id ? (
-                          <a
+                          
                             href={`https://dashboard.stripe.com/checkout/sessions/${order.stripe_session_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -501,6 +509,17 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                     </p>
                   </div>
                 )}
+
+                {/* Jar Collection */}
+                <div>
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Jar Collection</p>
+                  <p className="text-sm flex items-center gap-1.5">
+                    <Recycle className={`h-3.5 w-3.5 ${order.jar_collection ? "text-sage" : "text-muted-foreground"}`} />
+                    {order.jar_collection
+                      ? <span className="font-medium text-sage">Requested — collect empty jars on this delivery</span>
+                      : <span className="text-muted-foreground">Not requested</span>}
+                  </p>
+                </div>
 
                 {/* Delivery Status — all non-skipped, non-cancelled, non-orphaned orders */}
                 {!isSkipped && !isCancelled && !isOrphaned && (
