@@ -3,7 +3,7 @@
 "use client"
  
 import React from "react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -22,8 +22,18 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  // Read a one-off ?message= param (e.g. set by /auth/callback when a signup
+  // confirmation link was already consumed by an email scanner). Using
+  // window.location instead of useSearchParams avoids Next's Suspense-boundary
+  // requirement for a single, non-critical banner.
+  useEffect(() => {
+    const message = new URLSearchParams(window.location.search).get("message")
+    if (message) setNotice(message)
+  }, [])
  
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -98,6 +108,12 @@ export default function LoginPage() {
             Sign in to manage your orders/subscription
           </p>
  
+          {notice && (
+            <div className="mt-6 rounded-md border border-sage/30 bg-sage/10 px-4 py-3 text-sm text-sage">
+              {notice}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="mt-8 space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
