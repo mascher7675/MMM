@@ -447,7 +447,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                     <div className="flex flex-wrap gap-2">
                       {isSubscription ? (
                         order.stripe_subscription_id && (
-                          
+                          <a
                             href={`https://dashboard.stripe.com/subscriptions/${order.stripe_subscription_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -459,7 +459,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                         )
                       ) : (
                         order.stripe_payment_intent_id ? (
-                          
+                          <a
                             href={`https://dashboard.stripe.com/payments/${order.stripe_payment_intent_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -469,7 +469,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                             View Payment
                           </a>
                         ) : order.stripe_session_id ? (
-                          
+                          <a
                             href={`https://dashboard.stripe.com/checkout/sessions/${order.stripe_session_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
