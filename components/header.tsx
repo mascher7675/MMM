@@ -77,9 +77,9 @@ export function Header() {
             height={50}
             className="h-14 w-14"
           />
-          <div className="hidden flex-col sm:flex">
-            <span className="font-serif text-lg font-semibold tracking-wide text-foreground">Modern Milk Maid</span>
-            <span className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Plant Based Milks</span>
+          <div className="flex flex-col">
+            <span className="font-serif text-base font-semibold tracking-wide text-foreground sm:text-lg">Modern Milk Maid</span>
+            <span className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground sm:text-[10px]">Plant Based Milks</span>
           </div>
         </Link>
  
