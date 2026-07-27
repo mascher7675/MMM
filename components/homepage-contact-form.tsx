@@ -117,18 +117,18 @@ export function HomepageContactForm() {
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <a
-                href="sms:+15167437675"
+                href="sms:+16316569549"
                 className="flex items-center gap-1.5 rounded-lg bg-sage/10 px-3 py-1.5 text-sm font-medium text-sage transition-colors hover:bg-sage/20"
               >
                 <MessageCircle className="h-4 w-4" />
                 Text us
               </a>
               <a
-                href="tel:+15167437675"
+                href="tel:+16316569549"
                 className="flex items-center gap-1.5 rounded-lg bg-sage/10 px-3 py-1.5 text-sm font-medium text-sage transition-colors hover:bg-sage/20"
               >
                 <Phone className="h-4 w-4" />
-                (516)-743-7675
+                (631) 656-9549
               </a>
             </div>
           </div>
