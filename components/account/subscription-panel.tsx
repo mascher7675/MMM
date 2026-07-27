@@ -1111,7 +1111,7 @@ function SingleSubscriptionCard({
         >
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Interested in jar collection on your next delivery? Toggle this anytime — it applies to your very next delivery, and stays on for every delivery after that until you turn it off.
+              Interested in jar collection on your next delivery? Just leave your empty jars outside and we&apos;ll pick them up.
             </p>
             <div className="flex gap-2">
               <button
