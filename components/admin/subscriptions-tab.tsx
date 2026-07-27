@@ -39,9 +39,9 @@ interface SkipModalProps {
 
 function SkipModal({ sub, onClose, onSuccess }: SkipModalProps) {
   const deliveryDay = (sub.delivery_day ?? "thursday") as "thursday" | "friday"
-  // Compute next 6 upcoming weekly delivery dates on the client — matches
+  // Compute next 4 upcoming weekly delivery dates on the client — matches
   // the number of options shown to customers in the account dashboard.
-  const upcomingDates = computeDeliveryDates(deliveryDay, 6)
+  const upcomingDates = computeDeliveryDates(deliveryDay, 4)
   const currentSkipped = (sub.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
 
   const [selected, setSelected] = useState<Set<string>>(new Set(currentSkipped))

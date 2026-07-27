@@ -465,8 +465,8 @@ function SingleSubscriptionCard({
     setIsMilkLocked(isSkipLocked(delivDay))
     setIsDeliverySkipLocked(isSkipLocked(delivDay))
     setIsDeliveryMorning(isDeliveryDayMorning(delivDay))
-    // Compute upcoming 6 delivery dates on client only
-    setUpcomingDates(computeDeliveryDates(delivDay, 6))
+    // Compute upcoming 4 delivery dates on client only
+    setUpcomingDates(computeDeliveryDates(delivDay, 4))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
  
   // Recompute the "Next:" date shown for each delivery-day option whenever
