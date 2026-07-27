@@ -46,6 +46,7 @@ import {
 } from "@/app/actions/subscription"
 import { isSkipLocked, isDeliveryDayChangeLocked, computeDeliveryDates, isDeliveryDayMorning } from "@/lib/delivery-utils"
 import { PRODUCTS } from "@/lib/products"
+import { computeProcessingFeeCents } from "@/lib/fees"
 import Image from "next/image"
 import Link from "next/link"
  
@@ -533,6 +534,19 @@ function SingleSubscriptionCard({
     0
   )
 
+  // The card-processing fee is charged as its own recurring line item on each
+  // Stripe subscription, so it's computed per subscription and summed — not one
+  // fee on the combined subtotal. This matches what the customer is actually
+  // billed weekly.
+  const weeklyProcessingFee = allSubs.reduce((sum, s) => {
+    const subSubtotal = s.subscription_items.reduce(
+      (a, it) => a + it.price_cents * it.quantity,
+      0
+    )
+    return sum + computeProcessingFeeCents(subSubtotal)
+  }, 0)
+  const weeklyGrandTotal = weeklyTotal + weeklyProcessingFee
+
   const currentMilkSummary = mergedItems
     .map((item) => {
       const mt = milkTypeFromProductId(item.product_id)
@@ -848,9 +862,19 @@ function SingleSubscriptionCard({
                   </div>
                 </div>
               ))}
-              <div className="flex justify-between text-sm font-semibold border-t border-border pt-2">
-                <span className="text-foreground">Total</span>
-                <span className="text-foreground">{formatPrice(weeklyTotal)}/wk</span>
+              <div className="space-y-1 border-t border-border pt-2">
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Subtotal</span>
+                  <span>{formatPrice(weeklyTotal)}/wk</span>
+                </div>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Processing fee</span>
+                  <span>{formatPrice(weeklyProcessingFee)}/wk</span>
+                </div>
+                <div className="flex justify-between text-sm font-semibold pt-1">
+                  <span className="text-foreground">Total</span>
+                  <span className="text-foreground">{formatPrice(weeklyGrandTotal)}/wk</span>
+                </div>
               </div>
               <button
                 type="button"
