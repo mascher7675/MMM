@@ -987,7 +987,10 @@ function SingleSubscriptionCard({
           <div className="space-y-3">
             <div className="rounded-md border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
               <span className="font-medium text-foreground">Cutoff:</span> Skip or unskip before{" "}
-              <span className="font-medium">5 PM Thursday</span> — no charge for skipped weeks.
+              <span className="font-medium">
+                5 PM {activeSubscription.delivery_day === "friday" ? "Thursday" : "Wednesday"}
+              </span>{" "}
+              (the evening before) — no charge for skipped weeks.
             </div>
  
             {isDeliverySkipLocked && (
