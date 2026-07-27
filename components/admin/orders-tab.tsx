@@ -355,25 +355,27 @@ export function OrdersTab({ orders: initialOrders }: Props) {
               className="flex w-full items-center gap-4 p-4 text-left hover:bg-secondary/30 transition-colors"
             >
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="font-medium">#{order.order_code ?? order.id.slice(-5).toUpperCase()}</span>
                   <span className="text-sm text-muted-foreground">{order.customer_name}</span>
-                  {isOrphaned ? (
-                    <span className="rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">Deleted</span>
-                  ) : isSkipped ? (
-                    <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Skipped</span>
-                  ) : (
-                    <>
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700"}`}>
-                        {order.status}
-                      </span>
-                      {isCancelled && order.refund_amount_cents != null && (
-                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                          Refunded {fmt(order.refund_amount_cents)}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {isOrphaned ? (
+                      <span className="rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">Deleted</span>
+                    ) : isSkipped ? (
+                      <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Skipped</span>
+                    ) : (
+                      <>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700"}`}>
+                          {order.status}
                         </span>
-                      )}
-                    </>
-                  )}
+                        {isCancelled && order.refund_amount_cents != null && (
+                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                            Refunded {fmt(order.refund_amount_cents)}
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-0.5 text-xs text-muted-foreground flex flex-wrap items-center gap-x-1">

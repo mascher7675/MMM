@@ -129,90 +129,6 @@ export function DeliveryTab() {
     setTimeout(() => setSaveSuccess(false), 3000)
   }
 
-  const handlePrint = () => {
-    const totals: Record<string, number> = {}
-    list.forEach(stop => stop.items.forEach(item => {
-      totals[item.name] = (totals[item.name] ?? 0) + item.quantity
-    }))
-
-    const stopsHtml = list.map((stop, i) => `
-      <div class="stop">
-        <div class="stop-header">
-          <div class="stop-num">${i + 1}</div>
-          <div class="stop-info">
-            <div class="stop-name">
-              ${stop.customerName}
-              ${stop.isCashCustomer ? '<span class="badge cash">Cash</span>' : ''}
-              ${stop.hasSub && stop.hasOneTime ? '<span class="badge sub">Subscription</span><span class="badge one-time">+ One Time</span>' : stop.isOneTime ? '<span class="badge one-time">One-Time</span>' : '<span class="badge sub">Subscription</span>'}
-              ${stop.jarCollection ? '<span class="badge jar">&#9851; Jar Pickup</span>' : ''}
-            </div>
-            <div class="stop-address">📍 ${stop.address}, ${stop.city} ${stop.zip}</div>
-            ${stop.customerPhone ? `<div class="stop-phone">📞 ${fmtPhone(stop.customerPhone)}</div>` : ''}
-            ${stop.deliveryInstructions ? `<div class="note note-amber">${!stop.isCashCustomer ? '<strong>From Customer:</strong> ' : ''}${stop.deliveryInstructions}</div>` : ''}
-            ${stop.adminNotes ? `<div class="note note-blue">${stop.adminNotes}</div>` : ''}
-            <div class="items">
-              ${groupItems(stop.items).map(item => `<span class="item-tag">${item.name} × ${item.quantity}</span>`).join('')}
-            </div>
-          </div>
-          <div class="bottle-count">${stop.items.reduce((s, item) => s + item.quantity, 0)} bottle${stop.items.reduce((s, item) => s + item.quantity, 0) !== 1 ? 's' : ''}</div>
-        </div>
-      </div>
-    `).join('')
-
-    const summaryHtml = Object.entries(totals).sort(([a], [b]) => a.localeCompare(b)).map(([name, qty]) => `
-      <div class="summary-row"><span>${name}</span><span>× ${qty}</span></div>
-    `).join('')
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${day.charAt(0).toUpperCase() + day.slice(1)} Delivery List</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; color: #111; padding: 24px; }
-    h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
-    .subtitle { font-size: 12px; color: #666; margin-bottom: 20px; }
-    .stop { border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
-    .stop-header { display: flex; align-items: flex-start; gap: 10px; }
-    .stop-num { width: 26px; height: 26px; border-radius: 50%; background: #7C9885; color: white; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
-    .stop-info { flex: 1; }
-    .stop-name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .stop-address, .stop-phone { font-size: 12px; color: #555; margin-top: 3px; }
-    .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; font-weight: 500; }
-    .badge.cash { background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; }
-    .badge.one-time { background: #dbeafe; border: 1px solid #93c5fd; color: #1e3a8a; }
-    .badge.sub { background: #dcfce7; border: 1px solid #86efac; color: #166534; }
-    .badge.jar { background: #ecfdf5; border: 1px solid #7C9885; color: #166534; font-weight: 600; }
-    .note { margin-top: 5px; padding: 4px 8px; border-radius: 5px; font-size: 11px; }
-    .note-amber { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
-    .note-blue { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
-    .items { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
-    .item-tag { background: #f1f5f9; border-radius: 999px; padding: 2px 8px; font-size: 11px; }
-    .bottle-count { font-size: 11px; color: #666; white-space: nowrap; margin-top: 3px; }
-    .summary { border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-top: 16px; background: #f8fafc; }
-    .summary h2 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
-    .summary-row { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
-    .summary-row span:first-child { color: #555; }
-    .summary-row span:last-child { font-weight: 600; }
-  </style>
-</head>
-<body>
-  <h1>${day.charAt(0).toUpperCase() + day.slice(1)} Deliveries</h1>
-  <div class="subtitle">${list.length} stop${list.length !== 1 ? 's' : ''}${list.filter(s => s.jarCollection).length > 0 ? ` · ${list.filter(s => s.jarCollection).length} jar pickup${list.filter(s => s.jarCollection).length !== 1 ? 's' : ''}` : ''} · Printed ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
-  ${stopsHtml}
-  <div class="summary"><h2>Bottle Summary</h2>${summaryHtml}</div>
-</body>
-</html>`
-
-    const win = window.open('', '_blank', 'width=800,height=900')
-    if (!win) return
-    win.document.write(html)
-    win.document.close()
-    win.focus()
-    setTimeout(() => { win.print(); win.close() }, 300)
-  }
-
   return (
     <div className="space-y-6">
       <div>
@@ -257,12 +173,6 @@ export function DeliveryTab() {
               <span className="rounded-full bg-[#7C9885]/10 px-3 py-1 text-sm font-medium text-[#7C9885]">
                 {list.length} stop{list.length !== 1 ? "s" : ""}
               </span>
-              {list.some((s) => s.jarCollection) && (
-                <span className="inline-flex items-center gap-1 rounded-full border border-[#7C9885] bg-[#7C9885]/10 px-3 py-1 text-sm font-medium text-[#7C9885]">
-                  <Recycle className="h-3.5 w-3.5" />
-                  {list.filter((s) => s.jarCollection).length} jar pickup{list.filter((s) => s.jarCollection).length !== 1 ? "s" : ""}
-                </span>
-              )}
               {isDirty && (
                 <button
                   onClick={handleSaveRoute}
@@ -278,12 +188,6 @@ export function DeliveryTab() {
                   <Check className="h-3.5 w-3.5" /> Route saved
                 </span>
               )}
-              <button
-                onClick={handlePrint}
-                className="rounded-md border border-border bg-card px-3 py-1.5 text-xs hover:bg-secondary transition-colors"
-              >
-                Print List
-              </button>
             </div>
           </div>
 
@@ -351,6 +255,12 @@ export function DeliveryTab() {
                       <p className="mt-0.5 text-sm text-muted-foreground">
                         <Phone className="mr-1 inline h-3.5 w-3.5" />
                         <a href={`tel:${stop.customerPhone}`} className="hover:text-foreground transition-colors">{fmtPhone(stop.customerPhone)}</a>
+                      </p>
+                    )}
+                    {stop.jarCollection && (
+                      <p className="mt-0.5 text-sm font-medium text-[#7C9885]">
+                        <Recycle className="mr-1 inline h-3.5 w-3.5" />
+                        Collect empty jars
                       </p>
                     )}
                     {(stop.deliveryInstructions || stop.adminNotes) && (
