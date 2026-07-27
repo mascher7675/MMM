@@ -15,7 +15,17 @@ import Image from "next/image"
 import Link from "next/link"
  
 export function CartDrawer() {
-  const { items, isOpen, setIsOpen, removeItem, updateQuantity, totalPriceInCents, totalItems } = useCart()
+  const {
+    items,
+    isOpen,
+    setIsOpen,
+    removeItem,
+    updateQuantity,
+    totalPriceInCents,
+    processingFeeInCents,
+    totalWithFeeInCents,
+    totalItems,
+  } = useCart()
  
   const formatPrice = (cents: number) => {
     return `$${(cents / 100).toFixed(2)}`
@@ -111,13 +121,23 @@ export function CartDrawer() {
             </div>
  
             <div className="space-y-4 border-t border-border pt-4 pb-6">
-              <div className="flex items-center justify-between px-2">
-                <span className="text-base text-muted-foreground">Subtotal</span>
-                <span className="text-xl font-semibold">{formatPrice(totalPriceInCents)}</span>
+              <div className="space-y-2 px-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Subtotal</span>
+                  <span className="text-sm font-medium">{formatPrice(totalPriceInCents)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Processing fee</span>
+                  <span className="text-sm font-medium">{formatPrice(processingFeeInCents)}</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-border pt-2">
+                  <span className="text-base font-medium">Total</span>
+                  <span className="text-xl font-semibold">{formatPrice(totalWithFeeInCents)}</span>
+                </div>
               </div>
-              
+
               <p className="px-2 text-center text-xs text-muted-foreground">
-                (Delivery included & tax free)
+                Delivery included & tax free. A processing fee is added at checkout.
               </p>
               
               <div className="space-y-3 px-2">

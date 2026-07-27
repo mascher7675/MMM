@@ -61,8 +61,9 @@ export interface OrderEmailData {
     quantity: number
     price: number            // in cents
   }>
-  subtotal: number           // in cents
-  total: number              // in cents
+  subtotal: number           // in cents — products only, before the processing fee
+  processingFee?: number     // in cents — card processing fee the customer covered
+  total: number              // in cents — what was actually charged (subtotal + fee)
 }
 
 export async function sendOrderConfirmationEmail(data: OrderEmailData) {
@@ -102,6 +103,25 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
       </div>
     </div>
   `).join("")
+
+  // Subtotal + processing-fee breakdown, shown only when a fee was charged.
+  // For subscriptions each figure recurs weekly, so append a /wk hint.
+  const wkSuffix = data.isSubscription
+    ? `<span style="font-size:12px;font-weight:normal;color:#888;">/wk</span>`
+    : ""
+  const feeBreakdownRows =
+    data.processingFee && data.processingFee > 0
+      ? `
+    <div style="display:table-row;">
+      <div style="display:table-cell;padding:14px 0 8px;border-top:1px solid #EDE8DF;font-family:Georgia,serif;font-size:15px;color:#5a5a4e;">Subtotal</div>
+      <div style="display:table-cell;padding:14px 0 8px;border-top:1px solid #EDE8DF;font-family:Georgia,serif;font-size:15px;color:#5a5a4e;text-align:right;">$${(data.subtotal / 100).toFixed(2)}${wkSuffix}</div>
+    </div>
+    <div style="display:table-row;">
+      <div style="display:table-cell;padding:0 0 8px;font-family:Georgia,serif;font-size:15px;color:#5a5a4e;">Processing fee</div>
+      <div style="display:table-cell;padding:0 0 8px;font-family:Georgia,serif;font-size:15px;color:#5a5a4e;text-align:right;">$${(data.processingFee / 100).toFixed(2)}${wkSuffix}</div>
+    </div>
+  `
+      : ""
 
   const totalLabel = data.isSubscription ? "Weekly Total" : "Total"
   const totalValue = data.isSubscription
@@ -174,6 +194,7 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
               <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#5A81A5;margin-bottom:16px;">${orderSectionLabel}</div>
               <div style="display:table;width:100%;border-collapse:collapse;">
                 ${itemRows}
+                ${feeBreakdownRows}
                 <div style="display:table-row;">
                   <div style="display:table-cell;padding:18px 0 0;border-top:2px solid #2C3E2D;font-family:Georgia,serif;font-size:16px;font-weight:bold;color:#2C3E2D;">${totalLabel}</div>
                   <div style="display:table-cell;padding:18px 0 0;border-top:2px solid #2C3E2D;font-family:Georgia,serif;font-size:18px;font-weight:bold;color:#2C3E2D;text-align:right;">${totalValue}</div>

@@ -5,6 +5,11 @@
 import Stripe from "stripe"
 import { stripe } from "@/lib/stripe"
 import { PRODUCTS } from "@/lib/products"
+import {
+  computeProcessingFeeCents,
+  PROCESSING_FEE_LABEL,
+  PROCESSING_FEE_DESCRIPTION,
+} from "@/lib/fees"
 import { createClient } from "@/lib/supabase/server"
 import { sendOrderConfirmationEmail } from "@/lib/email"
 import {
@@ -165,6 +170,43 @@ export async function createCheckoutSession(
         quantity: item.quantity,
       }
     })
+
+    // ── Processing fee ──────────────────────────────────────────────────────
+    // The customer covers Stripe's card fee (2.9% + $0.30) instead of the
+    // business absorbing it. This batch is always all-subscription OR
+    // all-one-time (mixed carts are rejected above), so the subtotal is just
+    // the sum of the relevant price. The fee is added as its own line item so
+    // it shows on the Stripe checkout page and the receipt.
+    //
+    // For subscriptions the fee recurs WEEKLY alongside the milk, so every
+    // weekly renewal (each a separate Stripe charge) carries its own fee.
+    const feeBaseCents = cartItems.reduce((sum, item) => {
+      const product = PRODUCTS.find((p) => p.id === item.productId)
+      if (!product) return sum
+      const unit = hasSubscription
+        ? product.subscriptionPriceInCents
+        : product.priceInCents
+      return sum + unit * item.quantity
+    }, 0)
+
+    const processingFeeCents = computeProcessingFeeCents(feeBaseCents)
+
+    if (processingFeeCents > 0) {
+      lineItems.push({
+        price_data: {
+          currency: "usd",
+          product_data: {
+            name: PROCESSING_FEE_LABEL,
+            description: PROCESSING_FEE_DESCRIPTION,
+          },
+          unit_amount: processingFeeCents,
+          ...(hasSubscription && {
+            recurring: { interval: "week" as const },
+          }),
+        },
+        quantity: 1,
+      })
+    }
 
     const mode: Stripe.Checkout.SessionCreateParams.Mode = hasSubscription
       ? "subscription"
@@ -501,6 +543,11 @@ export async function saveOrderFromSession(sessionId: string) {
     }, 0)
     const amountTotal = session.amount_total ?? cartTotal
 
+    // The difference between what was charged and the product subtotal is the
+    // processing fee the customer covered. Guard against negatives in case an
+    // older in-flight session (created before the fee existed) is settled.
+    const processingFee = Math.max(0, amountTotal - cartTotal)
+
     const stripeSubIdForOrder = isSubscriptionMode
       ? (typeof session.subscription === "string"
           ? session.subscription
@@ -562,7 +609,7 @@ export async function saveOrderFromSession(sessionId: string) {
         user_id: user.id,
         status: "confirmed",
         order_type: isSubscriptionMode ? "subscription" : "one_time",
-        subtotal: amountTotal,
+        subtotal: cartTotal,
         total: amountTotal,
         delivery_day: deliveryDay,
         delivery_address: profile?.address || null,
@@ -699,7 +746,8 @@ export async function saveOrderFromSession(sessionId: string) {
             zip: profile?.zip || "",
           },
           items: emailItems,
-          subtotal: amountTotal,
+          subtotal: cartTotal,
+          processingFee,
           total: amountTotal,
         })
       } catch (emailError) {

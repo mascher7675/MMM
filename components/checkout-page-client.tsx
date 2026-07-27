@@ -7,6 +7,7 @@ import Image from "next/image"
 import { X } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import { useCart } from "@/lib/cart-context"
+import { computeProcessingFeeCents } from "@/lib/fees"
 import { CheckoutForm } from "@/components/checkout-form"
 
 interface AddressData {
@@ -67,9 +68,21 @@ function CheckoutPageClientInner({ userId, initialAddress }: CheckoutPageClientP
     ? items.filter((item) => !item.isSubscription)
     : items
 
-  const displayTotalInCents = isReturningFromSubscriptionPhase
+  const displaySubtotalInCents = isReturningFromSubscriptionPhase
     ? displayItems.reduce((sum, item) => sum + item.priceInCents * item.quantity, 0)
     : totalPriceInCents
+
+  // Match how checkout actually charges the fee: one fee per Stripe session,
+  // i.e. one for the subscription portion and one for the one-time portion.
+  const displaySubscriptionSubtotal = displayItems.reduce(
+    (sum, item) => sum + (item.isSubscription ? item.priceInCents * item.quantity : 0),
+    0
+  )
+  const displayOneTimeSubtotal = displaySubtotalInCents - displaySubscriptionSubtotal
+  const displayFeeInCents =
+    computeProcessingFeeCents(displaySubscriptionSubtotal) +
+    computeProcessingFeeCents(displayOneTimeSubtotal)
+  const displayTotalInCents = displaySubtotalInCents + displayFeeInCents
 
   const formatPrice = (cents: number) => `$${(cents / 100).toFixed(2)}`
 
@@ -134,13 +147,25 @@ function CheckoutPageClientInner({ userId, initialAddress }: CheckoutPageClientP
             )}
           </div>
 
-          <div className="mt-6 border-t border-border pt-4">
-            <div className="flex justify-between text-lg font-medium">
+          <div className="mt-6 space-y-2 border-t border-border pt-4">
+            {displayItems.length > 0 && (
+              <>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Subtotal</span>
+                  <span>{formatPrice(displaySubtotalInCents)}</span>
+                </div>
+                <div className="flex justify-between text-sm text-muted-foreground">
+                  <span>Processing fee</span>
+                  <span>{formatPrice(displayFeeInCents)}</span>
+                </div>
+              </>
+            )}
+            <div className="flex justify-between border-t border-border pt-2 text-lg font-medium">
               <span>Total</span>
               <span>{formatPrice(displayTotalInCents)}</span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              (Delivery included & tax free)
+              Delivery included & tax free. A processing fee is added.
             </p>
           </div>
         </div>

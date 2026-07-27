@@ -3,7 +3,8 @@
 "use client"
  
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
- 
+import { computeProcessingFeeCents } from "@/lib/fees"
+
 export interface CartItem {
   productId: string
   name: string
@@ -22,6 +23,10 @@ interface CartContextType {
   clearCart: () => void
   totalItems: number
   totalPriceInCents: number
+  /** Card processing fee (2.9% + $0.30) the customer covers at checkout. */
+  processingFeeInCents: number
+  /** Product subtotal + processing fee — what the customer actually pays. */
+  totalWithFeeInCents: number
   isOpen: boolean
   setIsOpen: (open: boolean) => void
   /** null when cart is empty, "mixed" when both types are present */
@@ -124,6 +129,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
  
   const hasSubscription = items.some((i) => i.isSubscription)
   const hasOneTime = items.some((i) => !i.isSubscription)
+
+  // A mixed cart checks out as two separate Stripe sessions (subscription +
+  // one-time), each charged its own processing fee. Mirror that here so the
+  // previewed fee matches what's actually charged: compute a fee per portion.
+  const subscriptionSubtotal = items.reduce(
+    (sum, item) => sum + (item.isSubscription ? item.priceInCents * item.quantity : 0),
+    0
+  )
+  const oneTimeSubtotal = totalPriceInCents - subscriptionSubtotal
+  const processingFeeInCents =
+    computeProcessingFeeCents(subscriptionSubtotal) + computeProcessingFeeCents(oneTimeSubtotal)
+  const totalWithFeeInCents = totalPriceInCents + processingFeeInCents
+
   const cartType =
     items.length === 0
       ? null
@@ -143,6 +161,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
         clearCart,
         totalItems,
         totalPriceInCents,
+        processingFeeInCents,
+        totalWithFeeInCents,
         isOpen,
         setIsOpen,
         cartType,
