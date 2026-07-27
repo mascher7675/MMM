@@ -320,7 +320,7 @@ export function DeliveryTab() {
 
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <p className="font-medium">{stop.customerName}</p>
                         {stop.isCashCustomer ? (
                           <span className="rounded-full border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">Cash</span>
@@ -336,12 +336,6 @@ export function DeliveryTab() {
                           <span className="rounded-full border border-[#5A81A5]/30 px-2 py-0.5 text-[10px] text-[#5A81A5]">One Time</span>
                         ) : (
                           <span className="rounded-full border border-[#7C9885]/30 px-2 py-0.5 text-[10px] text-[#7C9885]">Subscription</span>
-                        )}
-                        {stop.jarCollection && (
-                          <span className="inline-flex items-center gap-1 rounded-full border border-[#7C9885] bg-[#7C9885]/10 px-2 py-0.5 text-[10px] font-medium text-[#7C9885]">
-                            <Recycle className="h-3 w-3" />
-                            Jar pickup
-                          </span>
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">

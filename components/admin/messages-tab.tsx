@@ -90,7 +90,7 @@ export function MessagesTab({ messages }: Props) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        {["all", "unread", "read", "resolved", "contact", "pause_request", "cancel_request", "refund_request"].map(f => (
+        {["all", "unread", "read", "resolved", "cancel_request", "refund_request"].map(f => (
           <button
             key={f}
             onClick={() => changeFilter(f)}
@@ -98,8 +98,7 @@ export function MessagesTab({ messages }: Props) {
               filter === f ? "bg-[#7C9885] text-white" : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}
           >
-            {f === "pause_request"  ? "Pause" :
-             f === "cancel_request" ? "Cancel" :
+            {f === "cancel_request" ? "Cancel" :
              f === "refund_request" ? "Refund" :
              f.charAt(0).toUpperCase() + f.slice(1)}
             {/* Badge for unresolved refund requests */}

@@ -236,7 +236,6 @@ export function OrdersTab({ orders: initialOrders }: Props) {
     filter === "cash"         ? o.is_cash_customer === true :
     filter === "online"       ? o.is_cash_customer === false :
     filter === "skipped"      ? o.status === "skipped" :
-    filter === "jars"         ? o.jar_collection === true :
     (o.delivery_state) === filter
   )
 
@@ -277,7 +276,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
 
       {/* ── Filter pills ── */}
       <div className="flex flex-wrap gap-2">
-        {["all", "pending", "out_for_delivery", "delivered", "subscription", "one_time", "skipped", "jars", "cash", "online"].map((f) => (
+        {["all", "pending", "delivered", "subscription", "one_time", "skipped", "cash", "online"].map((f) => (
           <button
             key={f}
             onClick={() => changeFilter(f)}
@@ -287,9 +286,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                 : "bg-secondary text-muted-foreground hover:text-foreground"
             }`}
           >
-            {f === "out_for_delivery" ? "Out for Delivery" :
-             f === "one_time" ? "One Time" :
-             f === "jars" ? "Jar Collection" :
+            {f === "one_time" ? "One Time" :
              f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
@@ -376,12 +373,6 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                         </span>
                       )}
                     </>
-                  )}
-                  {order.jar_collection && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-sage/40 bg-sage/10 px-2 py-0.5 text-[10px] font-medium text-sage">
-                      <Recycle className="h-3 w-3" />
-                      Jars
-                    </span>
                   )}
                 </div>
 
