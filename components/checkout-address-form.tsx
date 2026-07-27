@@ -31,6 +31,10 @@ interface CheckoutAddressFormProps {
   initialData?: Partial<AddressFormData>
   onComplete: (data: AddressFormData) => void
   hasSubscriptionItems?: boolean
+  // If the customer already has a live subscription, a new subscription must
+  // deliver on the same weekday. When set (and the cart has a subscription),
+  // the day picker is locked to this weekday.
+  lockedDeliveryDay?: "thursday" | "friday" | null
 }
 
 // North Fork deliverable towns
@@ -144,7 +148,12 @@ export function CheckoutAddressForm({
   initialData,
   onComplete,
   hasSubscriptionItems = false,
+  lockedDeliveryDay = null,
 }: CheckoutAddressFormProps) {
+  // Lock the day picker to the existing subscription's weekday only when this
+  // cart actually contains a subscription. One-time orders stay free to pick
+  // any day.
+  const isDayLocked = hasSubscriptionItems && !!lockedDeliveryDay
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showRequestForm, setShowRequestForm] = useState(false)
@@ -183,22 +192,30 @@ export function CheckoutAddressForm({
   const thursdayDates = getDeliveryDateOptions("thursday") // [this week, next week]
   const fridayDates = getDeliveryDateOptions("friday")
 
+  // When the day is locked to an existing subscription's weekday, only that
+  // weekday's dates are offered (soonest + later); otherwise both weekdays.
+  const lockedDates = lockedDeliveryDay === "thursday" ? thursdayDates : fridayDates
+
   // The two soonest upcoming dates (one per weekday), soonest first.
   // NOTE: these are NOT necessarily in the same calendar week — e.g. on a
   // Thursday morning, the soonest Thursday slot is already 7 days out (today's
   // cutoff has passed) while the soonest Friday slot is tomorrow. Labeled
   // "Soonest" in the UI rather than "This week" for exactly this reason.
-  const thisWeekOptions = [
-    { day: "thursday" as const, date: thursdayDates[0].date, iso: thursdayDates[0].iso },
-    { day: "friday" as const, date: fridayDates[0].date, iso: fridayDates[0].iso },
-  ].sort((a, b) => a.date.getTime() - b.date.getTime())
+  const thisWeekOptions = isDayLocked
+    ? [{ day: lockedDeliveryDay!, date: lockedDates[0].date, iso: lockedDates[0].iso }]
+    : [
+        { day: "thursday" as const, date: thursdayDates[0].date, iso: thursdayDates[0].iso },
+        { day: "friday" as const, date: fridayDates[0].date, iso: fridayDates[0].iso },
+      ].sort((a, b) => a.date.getTime() - b.date.getTime())
 
   // The next two dates after that (one per weekday), same reasoning applies —
   // labeled "Later" in the UI, not "Next week".
-  const nextWeekOptions = [
-    { day: "thursday" as const, date: thursdayDates[1].date, iso: thursdayDates[1].iso },
-    { day: "friday" as const, date: fridayDates[1].date, iso: fridayDates[1].iso },
-  ].sort((a, b) => a.date.getTime() - b.date.getTime())
+  const nextWeekOptions = isDayLocked
+    ? [{ day: lockedDeliveryDay!, date: lockedDates[1].date, iso: lockedDates[1].iso }]
+    : [
+        { day: "thursday" as const, date: thursdayDates[1].date, iso: thursdayDates[1].iso },
+        { day: "friday" as const, date: fridayDates[1].date, iso: fridayDates[1].iso },
+      ].sort((a, b) => a.date.getTime() - b.date.getTime())
 
   // Flat list for the dropdown, plus a lookup for the currently selected date
   // (used to look up the weekday when saving, and to render the cutoff note).
@@ -206,6 +223,20 @@ export function CheckoutAddressForm({
   const selectedDateOption = allDateOptions.find(
     (o) => o.iso === formData.deliveryDate
   )
+
+  // When the day is locked, default to the soonest date on that weekday so the
+  // customer only has to confirm (they can still pick the "later" date to delay
+  // the first delivery).
+  useEffect(() => {
+    if (isDayLocked && !formData.deliveryDate && thisWeekOptions[0]) {
+      setFormData((prev) => ({
+        ...prev,
+        deliveryDate: thisWeekOptions[0].iso,
+        deliveryDay: thisWeekOptions[0].day,
+      }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDayLocked])
 
   const isCityDeliverable = (city: string, state: string): boolean => {
     const normalizedCity = city.trim()
@@ -525,7 +556,9 @@ export function CheckoutAddressForm({
           {hasSubscriptionItems ? "Weekly Delivery Day *" : "Delivery Day *"}
         </Label>
         <p className="text-xs text-muted-foreground">
-          {hasSubscriptionItems
+          {isDayLocked
+            ? `Delivered on ${lockedDeliveryDay === "thursday" ? "Thursdays" : "Fridays"} to match your existing subscription, so everything arrives together on one day. Pick the soonest date, or a later one to delay the first delivery.`
+            : hasSubscriptionItems
             ? "Your subscription will deliver on this day each week. Picking a next-week date just delays your first delivery — every delivery after that follows your weekly day automatically."
             : "We deliver fresh, same-day on Thursdays and Fridays between 1pm to 5pm."}
         </p>

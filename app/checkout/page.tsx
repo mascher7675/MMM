@@ -14,6 +14,7 @@ export default async function CheckoutPage() {
 
   let userId: string | null = null
   let initialAddress = undefined
+  let existingDeliveryDay: "thursday" | "friday" | null = null
 
   if (user) {
     userId = user.id
@@ -30,12 +31,20 @@ export default async function CheckoutPage() {
     let jarCollectionInterest = false
     const { data: activeSub } = await supabase
       .from("subscriptions")
-      .select("jar_collection_interest")
+      .select("jar_collection_interest, delivery_day")
       .eq("user_id", user.id)
       .eq("status", "active")
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle()
+
+    // If the customer already has a live subscription, a NEW subscription must
+    // land on the same delivery day so everything is delivered together (and
+    // merges cleanly into their one account panel). This locks the checkout
+    // day picker to that weekday.
+    if (activeSub?.delivery_day === "thursday" || activeSub?.delivery_day === "friday") {
+      existingDeliveryDay = activeSub.delivery_day
+    }
 
     if (activeSub?.jar_collection_interest != null) {
       jarCollectionInterest = activeSub.jar_collection_interest
@@ -79,7 +88,7 @@ export default async function CheckoutPage() {
           <h1 className="mb-8 font-serif text-3xl font-medium text-foreground md:text-4xl">
             Checkout
           </h1>
-          <CheckoutPageClient userId={userId} initialAddress={initialAddress} />
+          <CheckoutPageClient userId={userId} initialAddress={initialAddress} existingDeliveryDay={existingDeliveryDay} />
         </div>
       </main>
       <Footer />

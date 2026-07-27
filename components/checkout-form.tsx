@@ -38,11 +38,14 @@ interface AddressData {
 interface CheckoutFormProps {
   userId: string | null
   initialAddress?: Partial<AddressData>
+  // Existing subscription's delivery day, if any — locks the day picker for
+  // new subscription checkouts.
+  existingDeliveryDay?: "thursday" | "friday" | null
 }
 
 type PaymentPhase = "subscription" | "one_time"
 
-export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
+export function CheckoutForm({ userId, initialAddress, existingDeliveryDay }: CheckoutFormProps) {
   const { items, cartType } = useCart()
   const searchParams = useSearchParams()
 
@@ -201,6 +204,7 @@ export function CheckoutForm({ userId, initialAddress }: CheckoutFormProps) {
         initialData={initialAddress}
         onComplete={handleAddressComplete}
         hasSubscriptionItems={items.some((item) => item.isSubscription)}
+        lockedDeliveryDay={existingDeliveryDay ?? null}
       />
     )
   }

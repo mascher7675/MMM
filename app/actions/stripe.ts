@@ -135,7 +135,27 @@ export async function createCheckoutSession(
       }
     }
 
-    const day: "thursday" | "friday" = deliveryDay === "thursday" ? "thursday" : "friday"
+    // If the customer already has a live subscription, a NEW subscription must
+    // land on that same delivery day so everything is delivered together and
+    // merges into one account panel. Enforce it server-side rather than trust
+    // the client — the checkout day picker is locked to match, but this is the
+    // authoritative guard.
+    let effectiveDeliveryDay = deliveryDay
+    if (user && hasSubscription) {
+      const { data: existingSub } = await supabase
+        .from("subscriptions")
+        .select("delivery_day")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (existingSub?.delivery_day === "thursday" || existingSub?.delivery_day === "friday") {
+        effectiveDeliveryDay = existingSub.delivery_day
+      }
+    }
+
+    const day: "thursday" | "friday" = effectiveDeliveryDay === "thursday" ? "thursday" : "friday"
 
     // Trust nothing from the client beyond "did they pick a real option."
     // The only two valid delivery dates for `day` right now are "this week"
@@ -222,7 +242,9 @@ export async function createCheckoutSession(
       ),
     }
     if (user) metadata.user_id = user.id
-    if (deliveryDay) metadata.delivery_day = deliveryDay
+    // Persist the effective day (may have been forced to match an existing
+    // subscription above), not the raw client value.
+    if (effectiveDeliveryDay) metadata.delivery_day = day
     metadata.delivery_date = validatedDeliveryDate
     // Stamp the jar-collection choice so saveOrderFromSession can persist it
     // onto the order (and, for subscriptions, onto the subscription).

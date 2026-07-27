@@ -25,6 +25,9 @@ interface AddressData {
 interface CheckoutPageClientProps {
   userId: string | null
   initialAddress?: Partial<AddressData>
+  // When the customer already has a live subscription, new subscription
+  // checkouts are locked to this delivery day.
+  existingDeliveryDay?: "thursday" | "friday" | null
 }
 
 /**
@@ -43,7 +46,7 @@ export function CheckoutPageClient(props: CheckoutPageClientProps) {
   )
 }
 
-function CheckoutPageClientInner({ userId, initialAddress }: CheckoutPageClientProps) {
+function CheckoutPageClientInner({ userId, initialAddress, existingDeliveryDay }: CheckoutPageClientProps) {
   const { items, totalPriceInCents, removeItem } = useCart()
   const searchParams = useSearchParams()
 
@@ -179,7 +182,7 @@ function CheckoutPageClientInner({ userId, initialAddress }: CheckoutPageClientP
               Add items to your cart to continue checking out.
             </p>
           ) : (
-            <CheckoutForm userId={userId} initialAddress={initialAddress} />
+            <CheckoutForm userId={userId} initialAddress={initialAddress} existingDeliveryDay={existingDeliveryDay} />
           )}
         </div>
       </div>
