@@ -13,6 +13,12 @@ const resend = new Resend(process.env.RESEND_API_KEY)
 const FROM_ADDRESS =
   process.env.EMAIL_FROM ?? 'Modern Milk Maid <hello@modernmilkmaid.store>'
 
+// Where customer replies to our outbound mail should land. `hello@` can send
+// (verified in Resend) but isn't a real inbox, so point replies at the
+// business Gmail. Override with EMAIL_REPLY_TO if the address ever changes.
+const REPLY_TO_ADDRESS =
+  process.env.EMAIL_REPLY_TO ?? 'modernmilkmaidpb@gmail.com'
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -198,6 +204,7 @@ export async function sendOrderConfirmationEmail(data: OrderEmailData) {
   try {
     const { data: emailData, error } = await resend.emails.send({
       from: FROM_ADDRESS,
+      replyTo: REPLY_TO_ADDRESS,
       to: [data.customerEmail],
       subject,
       html,
@@ -308,6 +315,7 @@ export async function sendRefundRequestConfirmationEmail(data: RefundRequestConf
   try {
     const { data: emailData, error } = await resend.emails.send({
       from: FROM_ADDRESS,
+      replyTo: REPLY_TO_ADDRESS,
       to: [data.customerEmail],
       subject: `We received your request — Order #${data.orderCode}`,
       html,
@@ -418,6 +426,7 @@ export async function sendRefundRequestDeclinedEmail(data: RefundRequestDeclined
   try {
     const { data: emailData, error } = await resend.emails.send({
       from: FROM_ADDRESS,
+      replyTo: REPLY_TO_ADDRESS,
       to: [data.customerEmail],
       subject: `An update on your request — Order #${data.orderCode}`,
       html,
@@ -534,6 +543,7 @@ export async function sendOrderCancelledEmail(data: OrderCancelledEmailData) {
   try {
     const { data: emailData, error } = await resend.emails.send({
       from: FROM_ADDRESS,
+      replyTo: REPLY_TO_ADDRESS,
       to: [data.customerEmail],
       subject: data.refunded
         ? `Your refund has been issued — Order #${data.orderCode}`
@@ -642,6 +652,7 @@ export async function sendSubscriptionCancelledEmail(data: SubscriptionCancelled
   try {
     const { data: emailData, error } = await resend.emails.send({
       from: FROM_ADDRESS,
+      replyTo: REPLY_TO_ADDRESS,
       to: [data.customerEmail],
       subject: `Your subscription has been cancelled — Modern Milk Maid`,
       html,
