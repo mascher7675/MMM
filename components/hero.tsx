@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button"
 export function Hero() {
   return (
     <section className="relative overflow-hidden bg-background">
-      <div className="mx-auto max-w-6xl px-4 py-16 md:px-6 md:py-24">
-        <div className="grid items-center gap-12 lg:grid-cols-2 lg:gap-16">
+      <div className="mx-auto max-w-6xl px-4 py-8 md:px-6 md:py-24">
+        <div className="grid items-center gap-8 lg:grid-cols-2 lg:gap-16">
           {/* Text Content */}
           <div className="order-2 lg:order-1">
             <p className="mb-4 text-sm uppercase tracking-[0.25em] text-sage">
@@ -54,7 +54,7 @@ export function Hero() {
 
           {/* Image */}
           <div className="order-1 lg:order-2">
-            <div className="relative mx-auto max-w-xs lg:mx-0 lg:max-w-none">
+            <div className="relative mx-auto max-w-[15rem] lg:mx-0 lg:max-w-none">
               <div className="relative aspect-4/5 overflow-hidden rounded-sm">
                 <Image
                   src="/images/2jars-home.jpg"
