@@ -54,7 +54,7 @@ export function Hero() {
 
           {/* Image */}
           <div className="order-1 lg:order-2">
-            <div className="relative">
+            <div className="relative mx-auto max-w-xs lg:mx-0 lg:max-w-none">
               <div className="relative aspect-4/5 overflow-hidden rounded-sm">
                 <Image
                   src="/images/2jars-home.jpg"
