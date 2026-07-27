@@ -2,7 +2,7 @@
 "use client"
 
 import { useState, useRef } from "react"
-import { Truck, RefreshCw, Save, Check, GripVertical, MapPin, Phone, Package } from "lucide-react"
+import { Truck, RefreshCw, Save, Check, GripVertical, MapPin, Phone, Package, Recycle } from "lucide-react"
 import { getDeliveryList, saveRouteOrder } from "@/app/actions/admin"
 import type { DeliveryStop } from "@/app/actions/admin"
 
@@ -144,6 +144,7 @@ export function DeliveryTab() {
               ${stop.customerName}
               ${stop.isCashCustomer ? '<span class="badge cash">Cash</span>' : ''}
               ${stop.hasSub && stop.hasOneTime ? '<span class="badge sub">Subscription</span><span class="badge one-time">+ One Time</span>' : stop.isOneTime ? '<span class="badge one-time">One-Time</span>' : '<span class="badge sub">Subscription</span>'}
+              ${stop.jarCollection ? '<span class="badge jar">&#9851; Jar Pickup</span>' : ''}
             </div>
             <div class="stop-address">📍 ${stop.address}, ${stop.city} ${stop.zip}</div>
             ${stop.customerPhone ? `<div class="stop-phone">📞 ${fmtPhone(stop.customerPhone)}</div>` : ''}
@@ -182,6 +183,7 @@ export function DeliveryTab() {
     .badge.cash { background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; }
     .badge.one-time { background: #dbeafe; border: 1px solid #93c5fd; color: #1e3a8a; }
     .badge.sub { background: #dcfce7; border: 1px solid #86efac; color: #166534; }
+    .badge.jar { background: #ecfdf5; border: 1px solid #7C9885; color: #166534; font-weight: 600; }
     .note { margin-top: 5px; padding: 4px 8px; border-radius: 5px; font-size: 11px; }
     .note-amber { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
     .note-blue { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
@@ -197,7 +199,7 @@ export function DeliveryTab() {
 </head>
 <body>
   <h1>${day.charAt(0).toUpperCase() + day.slice(1)} Deliveries</h1>
-  <div class="subtitle">${list.length} stop${list.length !== 1 ? 's' : ''} · Printed ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
+  <div class="subtitle">${list.length} stop${list.length !== 1 ? 's' : ''}${list.filter(s => s.jarCollection).length > 0 ? ` · ${list.filter(s => s.jarCollection).length} jar pickup${list.filter(s => s.jarCollection).length !== 1 ? 's' : ''}` : ''} · Printed ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div>
   ${stopsHtml}
   <div class="summary"><h2>Bottle Summary</h2>${summaryHtml}</div>
 </body>
@@ -255,6 +257,12 @@ export function DeliveryTab() {
               <span className="rounded-full bg-[#7C9885]/10 px-3 py-1 text-sm font-medium text-[#7C9885]">
                 {list.length} stop{list.length !== 1 ? "s" : ""}
               </span>
+              {list.some((s) => s.jarCollection) && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-[#7C9885] bg-[#7C9885]/10 px-3 py-1 text-sm font-medium text-[#7C9885]">
+                  <Recycle className="h-3.5 w-3.5" />
+                  {list.filter((s) => s.jarCollection).length} jar pickup{list.filter((s) => s.jarCollection).length !== 1 ? "s" : ""}
+                </span>
+              )}
               {isDirty && (
                 <button
                   onClick={handleSaveRoute}
@@ -328,6 +336,12 @@ export function DeliveryTab() {
                           <span className="rounded-full border border-[#5A81A5]/30 px-2 py-0.5 text-[10px] text-[#5A81A5]">One Time</span>
                         ) : (
                           <span className="rounded-full border border-[#7C9885]/30 px-2 py-0.5 text-[10px] text-[#7C9885]">Subscription</span>
+                        )}
+                        {stop.jarCollection && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-[#7C9885] bg-[#7C9885]/10 px-2 py-0.5 text-[10px] font-medium text-[#7C9885]">
+                            <Recycle className="h-3 w-3" />
+                            Jar pickup
+                          </span>
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">

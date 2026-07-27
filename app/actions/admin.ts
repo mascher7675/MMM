@@ -188,6 +188,9 @@ export interface DeliveryStop {
   isOneTime: boolean
   hasSub: boolean
   hasOneTime: boolean
+  /** Customer wants empty jars picked up on this delivery (from the
+   *  subscription's standing preference and/or a one-time order's choice). */
+  jarCollection: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -1657,7 +1660,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
     // route sheet — the driver would never know to go there.
     const { data: subs, error: subsError } = await supabase
       .from("subscriptions")
-      .select(`id, user_id, status, skipped_dates, stripe_subscription_id, final_delivery_date, subscription_items (product_name, size, quantity)`)
+      .select(`id, user_id, status, skipped_dates, stripe_subscription_id, final_delivery_date, jar_collection_interest, subscription_items (product_name, size, quantity)`)
       .in("status", ["active"])
       .eq("delivery_day", deliveryDay)
       .or(`cancel_at_period_end.eq.false,final_delivery_date.eq.${deliveryDate}`)
@@ -1666,7 +1669,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
 
     const { data: oneTimeOrders, error: ordersError } = await supabase
       .from("orders")
-      .select(`id, user_id, delivery_address, delivery_city, delivery_zip, placed_at, delivery_date, order_items (product_name, size, quantity)`)
+      .select(`id, user_id, delivery_address, delivery_city, delivery_zip, placed_at, delivery_date, jar_collection, order_items (product_name, size, quantity)`)
       .eq("delivery_day", deliveryDay)
       .eq("order_type", "one_time")
       .eq("status", "confirmed")
@@ -1712,6 +1715,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
       isCashCustomer: boolean
       routePosition: number | null
       isOneTime: boolean
+      jarCollection: boolean
     }
 
     const allPartialStops: PartialStop[] = []
@@ -1758,6 +1762,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           isCashCustomer: p?.is_cash_customer ?? false,
           routePosition: routePositionFor(p),
           isOneTime: false,
+          jarCollection: s.jar_collection_interest ?? false,
         })
       })
 
@@ -1783,6 +1788,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           isCashCustomer: p?.is_cash_customer ?? false,
           routePosition: routePositionFor(p),
           isOneTime: true,
+          jarCollection: o.jar_collection ?? false,
         })
       })
 
@@ -1808,6 +1814,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
           isOneTime: partial.isOneTime,
           hasSub: !partial.isOneTime,
           hasOneTime: partial.isOneTime,
+          jarCollection: partial.jarCollection,
         })
       } else {
         existing.items.push(...partial.items)
@@ -1815,6 +1822,7 @@ export async function getDeliveryList(deliveryDay: "thursday" | "friday", delive
         if (!partial.isOneTime) existing.hasSub = true
         if (partial.isOneTime) existing.hasOneTime = true
         existing.isOneTime = !existing.hasSub
+        existing.jarCollection = existing.jarCollection || partial.jarCollection
       }
     }
 
