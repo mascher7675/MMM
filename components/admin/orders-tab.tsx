@@ -12,7 +12,7 @@ import {
   refundSubscriptionOrder,
   deleteOrphanedOrder,
 } from "@/app/actions/admin"
-import { fmt, fmtDate, DELIVERY_STATE_LABELS, STATUS_COLORS } from "./admin-types"
+import { fmt, fmtDate, DELIVERY_STATE_LABELS } from "./admin-types"
 import type { AdminOrder } from "@/app/actions/admin"
 
 interface Props {
@@ -36,6 +36,15 @@ const DELIVERY_STATES = [
   { value: "delivered",        label: "Delivered" },
   { value: "failed",           label: "Failed" },
 ]
+
+// Soft outline tag styling for the order row — muted border + text, no fill,
+// matching the subscription / one-time tags on the delivery tab.
+const STATUS_OUTLINE: Record<string, string> = {
+  confirmed: "border-green-300/60 text-green-700 dark:text-green-500",
+  pending:   "border-amber-300/60 text-amber-700 dark:text-amber-500",
+  cancelled: "border-red-300/60 text-red-700 dark:text-red-500",
+}
+const STATUS_OUTLINE_FALLBACK = "border-gray-300/60 text-gray-600 dark:text-gray-400"
 
 // ---------------------------------------------------------------------------
 // Delete Orphaned Order Modal
@@ -360,16 +369,16 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                   <span className="text-sm text-muted-foreground">{order.customer_name}</span>
                   <div className="flex flex-wrap items-center gap-1.5">
                     {isOrphaned ? (
-                      <span className="rounded-full border border-red-300 bg-red-100 px-2 py-0.5 text-[10px] font-medium text-red-700">Deleted</span>
+                      <span className="rounded-full border border-red-300/60 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-500">Deleted</span>
                     ) : isSkipped ? (
-                      <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Skipped</span>
+                      <span className="rounded-full border border-amber-300/60 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-500">Skipped</span>
                     ) : (
                       <>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${STATUS_COLORS[order.status] ?? "bg-gray-100 text-gray-700"}`}>
+                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${STATUS_OUTLINE[order.status] ?? STATUS_OUTLINE_FALLBACK}`}>
                           {order.status}
                         </span>
                         {isCancelled && order.refund_amount_cents != null && (
-                          <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                          <span className="rounded-full border border-blue-200/70 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
                             Refunded {fmt(order.refund_amount_cents)}
                           </span>
                         )}
