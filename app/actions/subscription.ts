@@ -708,9 +708,111 @@ export async function reactivateSubscription(
       .eq("id", subscriptionId)
       .eq("user_id", user.id)
       .single()
- 
+
     if (subError || !sub) return { error: "Subscription not found" }
- 
+
+    // ── Re-instate a refunded delivery, if there is one ─────────────────────
+    // When the customer cancelled BEFORE the cutoff, the upcoming (week-1)
+    // delivery was charged-then-refunded and its order cancelled. Reactivating
+    // within that same window should fully restore it: re-charge the saved card
+    // and un-cancel the order so it ships and the "Refunded" tag clears.
+    //
+    // This only matches the refunded case: deliveries that were locked in and
+    // shipped (never refunded) have no such order, and mid-cycle cancels never
+    // charged in the first place — so week-2-onward reactivations do nothing
+    // here and just clear the cancellation below, exactly as before.
+    //
+    // The re-charge runs BEFORE we clear the cancellation. If it fails we abort
+    // and leave everything untouched (still scheduled to cancel, still
+    // refunded) so the customer can retry — nothing ships unpaid.
+    const todayISO = toLocalDateISO(new Date())
+    const { data: refundedOrder } = await supabase
+      .from("orders")
+      .select("id, delivery_date, total, refund_amount_cents, stripe_payment_intent_id")
+      .eq("subscription_id", subscriptionId)
+      .eq("user_id", user.id)
+      .eq("status", "cancelled")
+      .not("refund_amount_cents", "is", null)
+      .not("stripe_payment_intent_id", "is", null)
+      .gte("delivery_date", todayISO)
+      .order("delivery_date", { ascending: true })
+      .limit(1)
+      .maybeSingle()
+
+    if (refundedOrder?.stripe_payment_intent_id) {
+      const cutoffUnix = cutoffUnixForDelivery(refundedOrder.delivery_date)
+      const nowUnix = Math.floor(Date.now() / 1000)
+      // Only re-instate while that delivery's cutoff is still in the future —
+      // otherwise it's too late to prepare it, so just reactivate going forward.
+      if (nowUnix < cutoffUnix) {
+        const chargeAmount = refundedOrder.refund_amount_cents ?? refundedOrder.total
+        if (chargeAmount && chargeAmount > 0) {
+          try {
+            // Reuse the customer + card from the original (now-refunded) charge.
+            const originalPI = await stripe.paymentIntents.retrieve(
+              refundedOrder.stripe_payment_intent_id
+            )
+            const customerId =
+              typeof originalPI.customer === "string"
+                ? originalPI.customer
+                : originalPI.customer?.id
+            const paymentMethodId =
+              typeof originalPI.payment_method === "string"
+                ? originalPI.payment_method
+                : originalPI.payment_method?.id
+
+            if (!customerId || !paymentMethodId) {
+              return {
+                error:
+                  "We couldn't find your saved payment method to restore this delivery. Please contact us.",
+              }
+            }
+
+            const newPI = await stripe.paymentIntents.create({
+              amount: chargeAmount,
+              currency: "usd",
+              customer: customerId,
+              payment_method: paymentMethodId,
+              off_session: true,
+              confirm: true,
+              metadata: {
+                reason: "subscription_reactivation_recharge",
+                order_id: refundedOrder.id,
+                subscription_id: subscriptionId,
+              },
+            })
+
+            if (newPI.status !== "succeeded") {
+              return {
+                error:
+                  "Your card couldn't be charged to restore this delivery. Please update your payment method and try again.",
+              }
+            }
+
+            // Charged successfully — un-cancel the order so it ships and the
+            // refund fields (which drive the "Refunded" tag) are cleared.
+            await supabase
+              .from("orders")
+              .update({
+                status: "confirmed",
+                stripe_payment_intent_id: newPI.id,
+                stripe_refund_id: null,
+                refund_amount_cents: null,
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", refundedOrder.id)
+              .eq("user_id", user.id)
+          } catch (chargeErr) {
+            console.error("Failed to re-charge on reactivation:", chargeErr)
+            return {
+              error:
+                "We couldn't charge your card to restore this delivery. Please update your payment method and try again, or contact us.",
+            }
+          }
+        }
+      }
+    }
+
     if (sub.stripe_subscription_id) {
       // Cancellation was scheduled via the explicit `cancel_at` timestamp
       // (see cancelSubscriptionAtPeriodEnd), not `cancel_at_period_end` — so
@@ -719,7 +821,7 @@ export async function reactivateSubscription(
         cancel_at: null,
       })
     }
- 
+
     const { error } = await supabase
       .from("subscriptions")
       .update({

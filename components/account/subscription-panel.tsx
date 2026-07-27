@@ -762,7 +762,7 @@ function SingleSubscriptionCard({
                 </p>
               ) : (
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  You won&apos;t be charged again, and any charge for your upcoming delivery has been refunded.
+                  You won&apos;t be charged again, and your upcoming delivery has been refunded. Reactivate and we&apos;ll restore that delivery, re-charging the refunded amount.
                 </p>
               )}
 
