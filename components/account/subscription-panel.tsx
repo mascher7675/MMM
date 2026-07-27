@@ -267,13 +267,15 @@ function NoSubscriptionCard() {
 // Weekly skip row — one row per upcoming delivery date
 // ---------------------------------------------------------------------------
 function SkipDeliveryRow({
-  subscriptionId,
+  subscriptionIds,
   deliveryDate,
   isSkipped,
   locked,
   onToggle,
 }: {
-  subscriptionId: string
+  // One row can drive multiple merged subscriptions at once — skipping a week
+  // applies the same skip/unskip to every one of the customer's subscriptions.
+  subscriptionIds: string[]
   deliveryDate: string
   isSkipped: boolean
   locked: boolean
@@ -281,18 +283,23 @@ function SkipDeliveryRow({
 }) {
   const [isPending, startTransition] = useTransition()
   const [rowError, setRowError] = useState<string | null>(null)
- 
+
   function handleClick() {
     if (locked || isPending) return
     setRowError(null)
     startTransition(async () => {
-      const result = isSkipped
-        ? await unskipWeeklyDelivery(subscriptionId, deliveryDate)
-        : await skipWeeklyDelivery(subscriptionId, deliveryDate)
-      if (!result.error) {
+      const results = await Promise.all(
+        subscriptionIds.map((id) =>
+          isSkipped
+            ? unskipWeeklyDelivery(id, deliveryDate)
+            : skipWeeklyDelivery(id, deliveryDate)
+        )
+      )
+      const firstError = results.find((r) => r.error)?.error
+      if (!firstError) {
         onToggle(deliveryDate, !isSkipped)
       } else {
-        setRowError(result.error)
+        setRowError(firstError)
       }
     })
   }
@@ -340,17 +347,42 @@ function SkipDeliveryRow({
 // ---------------------------------------------------------------------------
 // Single subscription card
 // ---------------------------------------------------------------------------
+// A MergedItem is a subscription line item tagged with the id of the
+// subscription it belongs to, so a milk swap can target the right one even
+// when several subscriptions are merged into a single panel.
+type MergedItem = SubscriptionItem & { __subId: string }
+
 function SingleSubscriptionCard({
-  subscription,
-  index,
-  totalCount,
+  subscriptions,
 }: {
-  subscription: Subscription
-  index: number
-  totalCount: number
+  // One OR MANY of the customer's live subscriptions, rendered as a single
+  // panel. Shared edits (delivery day, skip a week, jar collection) fan out to
+  // every subscription; milk swaps target the item's own subscription; cancel
+  // lets the customer pick which subscriptions to end.
+  subscriptions: Subscription[]
 }) {
   const router = useRouter()
- 
+
+  // ── Merge model ───────────────────────────────────────────────────────────
+  const allSubs = subscriptions
+  const isMerged = allSubs.length > 1
+  // The "primary" sub drives shared display fields (delivery day, billing,
+  // skip dates). Prefer a live, non-cancelling one so those fields reflect an
+  // active subscription; fall back gracefully.
+  const primary =
+    allSubs.find((s) => isValidActiveSubscription(s) && !s.cancel_at_period_end) ??
+    allSubs.find((s) => isValidActiveSubscription(s)) ??
+    allSubs[0]
+  // Every line item across all merged subs, each tagged with its owning sub id.
+  const mergedItems: MergedItem[] = allSubs.flatMap((s) =>
+    s.subscription_items.map((it) => ({ ...it, __subId: s.id }))
+  )
+  // Subscriptions the customer can still choose to cancel (not already winding
+  // down). Drives the cancel picker.
+  const cancellableSubs = allSubs.filter((s) => !s.cancel_at_period_end)
+  // Subscriptions currently scheduled to cancel — reactivate targets these.
+  const cancellingSubs = allSubs.filter((s) => s.cancel_at_period_end)
+
   // ── State ─────────────────────────────────────────────────────────────────
   const [isUpdatingDay, setIsUpdatingDay] = useState(false)
   const [isCancelling, setIsCancelling] = useState(false)
@@ -358,8 +390,8 @@ function SingleSubscriptionCard({
   const [isOpeningBilling, setIsOpeningBilling] = useState(false)
  
   const [selectedDay, setSelectedDay] = useState<"thursday" | "friday">(
-    isValidActiveSubscription(subscription)
-      ? (subscription.delivery_day as "thursday" | "friday")
+    isValidActiveSubscription(primary)
+      ? (primary.delivery_day as "thursday" | "friday")
       : "thursday"
   )
  
@@ -375,27 +407,34 @@ function SingleSubscriptionCard({
   const [swapSuccessItemId, setSwapSuccessItemId] = useState<string | null>(null)
   const [swapError, setSwapError] = useState<string | null>(null)
   const [selectedMilkTypes, setSelectedMilkTypes] = useState<Record<string, "oat" | "almond" | "hemp" | "cashew">>(() => {
-    if (!isValidActiveSubscription(subscription)) return {}
+    if (!isValidActiveSubscription(primary)) return {}
     const initial: Record<string, "oat" | "almond" | "hemp" | "cashew"> = {}
-    for (const item of subscription.subscription_items) {
+    for (const item of mergedItems) {
       const mt = milkTypeFromProductId(item.product_id)
       if (mt) initial[item.id] = mt
     }
     return initial
   })
- 
+
   const [cancelSessionFinalDate, setCancelSessionFinalDate] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Which subscriptions the customer has selected to cancel (merged view only).
+  // Defaults to all cancellable subs so the common "cancel everything" case is
+  // one click.
+  const [selectedCancelIds, setSelectedCancelIds] = useState<string[]>(
+    cancellableSubs.map((s) => s.id)
+  )
  
   // Local optimistic state for skipped dates
   const [localSkippedDates, setLocalSkippedDates] = useState<string[]>(
-    (subscription.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
+    (primary.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
   )
 
   // Local optimistic state for jar collection interest, plus its own
   // pending/success flags — same pattern as the delivery-day save button.
   const [jarCollectionInterest, setJarCollectionInterest] = useState(
-    Boolean(subscription.jar_collection_interest)
+    Boolean(primary.jar_collection_interest)
   )
   const [isSavingJarPreference, setIsSavingJarPreference] = useState(false)
   const [jarPreferenceError, setJarPreferenceError] = useState<string | null>(null)
@@ -420,7 +459,7 @@ function SingleSubscriptionCard({
     const dd = String(d.getDate()).padStart(2, "0")
     setTodayISO(`${yyyy}-${mm}-${dd}`)
  
-    const delivDay = subscription.delivery_day as "thursday" | "friday"
+    const delivDay = primary.delivery_day as "thursday" | "friday"
     setIsSelectedDayLocked(isDeliveryDayChangeLocked())
     setIsMilkLocked(isSkipLocked(delivDay))
     setIsDeliverySkipLocked(isSkipLocked(delivDay))
@@ -450,13 +489,13 @@ function SingleSubscriptionCard({
   useEffect(() => {
     if (
       !didSyncRef.current &&
-      subscription?.cancel_at_period_end &&
-      !subscription.current_period_end &&
-      subscription.id
+      primary?.cancel_at_period_end &&
+      !primary.current_period_end &&
+      primary.id
     ) {
       didSyncRef.current = true
       setIsSyncingPeriodEnd(true)
-      syncPeriodEndFromStripe(subscription.id).then(({ current_period_end }) => {
+      syncPeriodEndFromStripe(primary.id).then(({ current_period_end }) => {
         setIsSyncingPeriodEnd(false)
         if (current_period_end) router.refresh()
       })
@@ -465,8 +504,8 @@ function SingleSubscriptionCard({
  
   // ── Early returns (after all hooks) ───────────────────────────────────────
  
-  if (!isValidActiveSubscription(subscription)) {
-    const sub = subscription
+  if (!isValidActiveSubscription(primary)) {
+    const sub = primary
     return (
       <div className="rounded-lg border border-border bg-card/50 px-4 py-3">
         <div className="flex items-center gap-2">
@@ -474,26 +513,27 @@ function SingleSubscriptionCard({
             {sub.status === "cancelled" ? "Cancelled" : sub.status === "paused" ? "Paused" : "Inactive"}
           </Badge>
           <span className="text-sm text-muted-foreground truncate">
-            {sub.subscription_items.length > 0
-              ? sub.subscription_items.map((i) => `${i.product_name} ×${i.quantity}`).join(", ")
+            {mergedItems.length > 0
+              ? mergedItems.map((i) => `${i.product_name} ×${i.quantity}`).join(", ")
               : "No items"}
           </span>
         </div>
       </div>
     )
   }
- 
+
   // ── Active subscription ───────────────────────────────────────────────────
- 
-  const activeSubscription = subscription
-  const isCancellationScheduled = activeSubscription.cancel_at_period_end
- 
-  const weeklyTotal = activeSubscription.subscription_items.reduce(
+
+  const activeSubscription = primary
+  // Every merged sub must be winding down for the panel to read as "cancelling".
+  const isCancellationScheduled = allSubs.every((s) => s.cancel_at_period_end)
+
+  const weeklyTotal = mergedItems.reduce(
     (sum, item) => sum + item.price_cents * item.quantity,
     0
   )
- 
-  const currentMilkSummary = activeSubscription.subscription_items
+
+  const currentMilkSummary = mergedItems
     .map((item) => {
       const mt = milkTypeFromProductId(item.product_id)
       return mt ? MILK_OPTIONS.find((o) => o.type === mt)?.label : null
@@ -507,10 +547,15 @@ function SingleSubscriptionCard({
     if (selectedDay === activeSubscription.delivery_day) return
     setIsUpdatingDay(true)
     setError(null)
-    const result = await updateDeliveryDay(activeSubscription.id, selectedDay)
+    // Apply the new delivery day to every merged subscription so they all
+    // arrive on the same day.
+    const results = await Promise.all(
+      allSubs.map((s) => updateDeliveryDay(s.id, selectedDay))
+    )
     setIsUpdatingDay(false)
-    if (result.error) {
-      setError(result.error)
+    const firstError = results.find((r) => r.error)?.error
+    if (firstError) {
+      setError(firstError)
     } else {
       setDayUpdateSuccess(true)
       setTimeout(() => setDayUpdateSuccess(false), 3000)
@@ -530,16 +575,26 @@ function SingleSubscriptionCard({
   }
 
   async function handleCancel() {
+    // In the merged view the customer picks which subscriptions to cancel; with
+    // a single subscription it's just that one.
+    const idsToCancel = isMerged
+      ? cancellableSubs.filter((s) => selectedCancelIds.includes(s.id)).map((s) => s.id)
+      : cancellableSubs.map((s) => s.id)
+    if (idsToCancel.length === 0) return
     setIsCancelling(true)
     setError(null)
-    const result = await cancelSubscriptionAtPeriodEnd(activeSubscription.id)
-    if (result.error) {
+    try {
+      for (const id of idsToCancel) {
+        const result = await cancelSubscriptionAtPeriodEnd(id)
+        if (result.error) throw new Error(result.error)
+        if (!result.finalDeliveryDate) {
+          await syncPeriodEndFromStripe(id)
+        }
+      }
+    } catch (e) {
       setIsCancelling(false)
-      setError(result.error)
+      setError(e instanceof Error ? e.message : "Something went wrong cancelling.")
       return
-    }
-    if (!result.finalDeliveryDate) {
-      await syncPeriodEndFromStripe(activeSubscription.id)
     }
     setIsCancelling(false)
     window.location.reload()
@@ -548,10 +603,14 @@ function SingleSubscriptionCard({
   async function handleReactivate() {
     setIsReactivating(true)
     setError(null)
-    const result = await reactivateSubscription(activeSubscription.id)
+    // Reactivate every subscription that's currently scheduled to cancel.
+    const results = await Promise.all(
+      cancellingSubs.map((s) => reactivateSubscription(s.id))
+    )
     setIsReactivating(false)
-    if (result.error) {
-      setError(result.error)
+    const firstError = results.find((r) => r.error)?.error
+    if (firstError) {
+      setError(firstError)
     } else {
       setCancelSessionFinalDate(null)
       setReactivateSuccess(true)
@@ -572,13 +631,14 @@ function SingleSubscriptionCard({
     }
   }
  
-  async function handleMilkSwap(item: SubscriptionItem, newMilkType: "oat" | "almond" | "hemp" | "cashew") {
+  async function handleMilkSwap(item: MergedItem, newMilkType: "oat" | "almond" | "hemp" | "cashew") {
     const currentMilk = milkTypeFromProductId(item.product_id)
     if (newMilkType === currentMilk) return
     setSwappingItemId(item.id)
     setSwapError(null)
     const newProductId = `${newMilkType}-${item.size.replace("oz", "")}oz`
-    const result = await swapSubscriptionMilk(activeSubscription.id, item.id, newProductId)
+    // Swap on the subscription this specific item belongs to.
+    const result = await swapSubscriptionMilk(item.__subId, item.id, newProductId)
     setSwappingItemId(null)
     if (result.error) {
       setSwapError(result.error)
@@ -602,11 +662,15 @@ function SingleSubscriptionCard({
     setJarCollectionInterest(interested) // optimistic
     setIsSavingJarPreference(true)
     setJarPreferenceError(null)
-    const result = await toggleJarCollectionInterest(activeSubscription.id, interested)
+    // Apply the jar-collection preference to every merged subscription.
+    const results = await Promise.all(
+      allSubs.map((s) => toggleJarCollectionInterest(s.id, interested))
+    )
     setIsSavingJarPreference(false)
-    if (result.error) {
+    const firstError = results.find((r) => r.error)?.error
+    if (firstError) {
       setJarCollectionInterest(previous) // revert on failure
-      setJarPreferenceError(result.error)
+      setJarPreferenceError(firstError)
     }
   }
  
@@ -759,15 +823,15 @@ function SingleSubscriptionCard({
                 <Badge className="bg-sage text-white text-xs shrink-0">Active</Badge>
               )}
               <span className="text-sm text-muted-foreground truncate">
-                {activeSubscription.subscription_items.map((i) => `${i.product_name} ×${i.quantity}`).join(", ")}
+                {mergedItems.map((i) => `${i.product_name} ×${i.quantity}`).join(", ")}
               </span>
             </div>
             <ChevronDown className={`h-4 w-4 shrink-0 ml-2 text-muted-foreground transition-transform duration-200 ${openSection === "order" ? "rotate-180" : ""}`} />
           </button>
- 
+
           {openSection === "order" && (
             <div className="border-t border-border px-4 pb-4 pt-3 space-y-3">
-              {activeSubscription.subscription_items.map((item) => (
+              {mergedItems.map((item) => (
                 <div key={item.id} className="flex items-center gap-3">
                   <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-border">
                     <Image
@@ -826,16 +890,16 @@ function SingleSubscriptionCard({
             </div>
           )}
           {(() => {
-            return activeSubscription.subscription_items.map((item) => {
+            return mergedItems.map((item) => {
               const currentMilk = milkTypeFromProductId(item.product_id)
               const selectedMilk = selectedMilkTypes[item.id] ?? currentMilk ?? "oat"
               const hasChanged = selectedMilk !== currentMilk
               const isSwapping = swappingItemId === item.id
               const swapSuccess = swapSuccessItemId === item.id
- 
+
               return (
                 <div key={item.id} className="space-y-3 mb-4 last:mb-0">
-                  {activeSubscription.subscription_items.length > 1 && (
+                  {mergedItems.length > 1 && (
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                       {item.product_name}
                     </p>
@@ -916,7 +980,7 @@ function SingleSubscriptionCard({
                 {upcomingDates.map((date, idx) => (
                   <SkipDeliveryRow
                     key={date}
-                    subscriptionId={activeSubscription.id}
+                    subscriptionIds={allSubs.map((s) => s.id)}
                     deliveryDate={date}
                     isSkipped={localSkippedDates.includes(date)}
                     locked={isDeliverySkipLocked && idx === 0 && (() => {
@@ -1096,6 +1160,40 @@ function SingleSubscriptionCard({
                 </Button>
               </AlertDialogCancel>
 
+              {/* Merged view: let the customer pick which subscriptions to end */}
+              {isMerged && cancellableSubs.length > 1 && (
+                <div className="mt-1 rounded-md border border-border bg-secondary/20 p-3">
+                  <p className="mb-2 text-xs font-medium text-foreground">
+                    Which would you like to cancel?
+                  </p>
+                  <div className="space-y-2">
+                    {cancellableSubs.map((s) => {
+                      const checked = selectedCancelIds.includes(s.id)
+                      const label = s.subscription_items
+                        .map((i) => `${i.product_name} ×${i.quantity}`)
+                        .join(", ")
+                      return (
+                        <label key={s.id} className="flex cursor-pointer items-start gap-2.5 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) =>
+                              setSelectedCancelIds((prev) =>
+                                e.target.checked
+                                  ? [...prev, s.id]
+                                  : prev.filter((id) => id !== s.id)
+                              )
+                            }
+                            className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-sage"
+                          />
+                          <span className="leading-snug text-foreground">{label || "Subscription"}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* What happens if they do cancel — adapts to cutoff */}
               <div className="mt-1 border-t border-border pt-4">
                 <p className="mb-3 text-xs font-medium text-muted-foreground">If you cancel:</p>
@@ -1129,11 +1227,13 @@ function SingleSubscriptionCard({
                 <AlertDialogCancel className="cursor-pointer">Keep subscription</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={handleCancel}
-                  disabled={isCancelling}
+                  disabled={isCancelling || (isMerged && selectedCancelIds.length === 0)}
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90 cursor-pointer"
                 >
                   {isCancelling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Cancel subscription
+                  {isMerged && selectedCancelIds.length !== cancellableSubs.length
+                    ? "Cancel selected"
+                    : "Cancel subscription"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -1145,7 +1245,8 @@ function SingleSubscriptionCard({
 }
  
 // ---------------------------------------------------------------------------
-// Main exported component — renders one card per subscription
+// Main exported component — merges all of the customer's live subscriptions
+// into a single editable panel
 // ---------------------------------------------------------------------------
 export function SubscriptionPanel({ userId, subscriptions }: SubscriptionPanelProps) {
   // Only show subscriptions that are still "live" in some sense — active
@@ -1166,21 +1267,11 @@ export function SubscriptionPanel({ userId, subscriptions }: SubscriptionPanelPr
  
   return (
     <div className="space-y-6">
-      {visibleSubscriptions.map((sub, i) => (
-        <div key={sub.id} className="space-y-4">
-          {visibleSubscriptions.length > 1 && (
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Subscription {i + 1}
-            </p>
-          )}
-          <SingleSubscriptionCard
-            subscription={sub}
-            index={i}
-            totalCount={visibleSubscriptions.length}
-          />
-        </div>
-      ))}
- 
+      {/* All of the customer's live subscriptions are merged into one panel so
+          there's a single place to edit delivery day, milk, skips, and to
+          cancel. */}
+      <SingleSubscriptionCard subscriptions={visibleSubscriptions} />
+
       <div className="flex justify-center pt-1">
         <Button variant="outline" size="sm" asChild className="gap-2 text-muted-foreground">
           <Link href="/subscribe">
