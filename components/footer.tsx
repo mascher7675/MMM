@@ -6,22 +6,22 @@ import { Instagram, Mail, MapPin, Phone } from "lucide-react"
 
 export function Footer() {
   return (
-    <footer className="border-t border-border/50 bg-foreground">
+    <footer className="border-t border-white/10 bg-black">
       <div className="mx-auto max-w-6xl px-4 py-16 md:px-6 md:py-20">
-        <div className="grid gap-12 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-x-8 gap-y-12 md:grid-cols-2 lg:grid-cols-12">
           {/* Brand Column */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-5">
             <Link href="/" className="inline-flex items-center gap-3">
               <Image
                 src="/images/black-logo.png"
                 alt="Modern Milk Maid"
                 width={240}
                 height={240}
-                className="h-56 w-56"
+                className="h-48 w-48"
               />
             </Link>
-            <p className="mt-6 max-w-xs text-sm leading-relaxed text-background/70">
-              Fresh, local plant based milk delivered weekly to the North Fork of Long Island. 
+            <p className="mt-4 max-w-xs text-sm leading-relaxed text-background/70">
+              Fresh, local plant based milk delivered weekly to the North Fork of Long Island.
               Made with love, delivered with care.
             </p>
             <div className="mt-6 flex items-center gap-3">
@@ -45,7 +45,7 @@ export function Footer() {
           </div>
 
           {/* Quick Links */}
-          <div>
+          <div className="lg:col-span-2">
             <h3 className="text-xs font-medium uppercase tracking-[0.2em] text-background/50">Shop</h3>
             <ul className="mt-4 space-y-3">
               <li>
@@ -67,7 +67,7 @@ export function Footer() {
           </div>
 
           {/* Company */}
-          <div>
+          <div className="lg:col-span-2">
             <h3 className="text-xs font-medium uppercase tracking-[0.2em] text-background/50">Company</h3>
             <ul className="mt-4 space-y-3">
               <li>
@@ -94,7 +94,7 @@ export function Footer() {
           </div>
 
           {/* Contact Info */}
-          <div>
+          <div className="lg:col-span-3">
             <h3 className="text-xs font-medium uppercase tracking-[0.2em] text-background/50">Contact</h3>
             <ul className="mt-4 space-y-4">
               <li className="flex items-start gap-3 text-sm text-background/80">
@@ -138,18 +138,10 @@ export function Footer() {
         </div>*/}
 
         {/* Bottom Bar */}
-        <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-background/10 pt-8 md:flex-row">
+        <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 md:flex-row">
           <p className="text-xs text-background/50">
             {new Date().getFullYear()} Modern Milk Maid. All rights reserved.
           </p>
-          <div className="flex items-center gap-6">
-            <Link href="/privacy" className="text-xs text-background/50 transition-colors hover:text-sage">
-              Privacy Policy
-            </Link>
-            <Link href="/terms" className="text-xs text-background/50 transition-colors hover:text-sage">
-              Terms of Service
-            </Link>
-          </div>
         </div>
       </div>
     </footer>
