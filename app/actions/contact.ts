@@ -36,16 +36,23 @@ export async function sendContactMessage({
 
     if (error) return { error: error.message }
 
-    // Send email notification to admin — non-blocking, don't fail the
-    // user-facing action if the email fails.
-    sendContactNotificationEmail({
-      name: name.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      message: message.trim(),
-    }).catch((err) =>
-      console.error("Failed to send contact notification email:", err)
-    )
+    // Best-effort admin notification for homepage/guest contact submissions.
+    // A failure here must NOT fail the submission — the message row is already
+    // saved and visible in the admin Messages tab regardless. This mirrors the
+    // logged-in contact path in app/actions/messages.ts, which was previously
+    // the only path that emailed ADMIN_EMAIL. The notification is sent to
+    // ADMIN_EMAIL (falling back to CONTACT_EMAIL, then info@modernmilkmaid.store)
+    // with reply-to set to the sender, so replies go straight to the customer.
+    try {
+      await sendContactNotificationEmail({
+        name: name.trim(),
+        email: email.trim(),
+        phone: phone.trim() || "Not provided",
+        message: message.trim(),
+      })
+    } catch (emailErr) {
+      console.error("[sendContactMessage] Failed to send contact notification email:", emailErr)
+    }
 
     return { error: null }
   } catch (e) {
