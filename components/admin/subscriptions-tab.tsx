@@ -12,6 +12,7 @@ import {
 } from "@/app/actions/admin"
 import { fmt, fmtDate, STATUS_COLORS } from "./admin-types"
 import { computeDeliveryDates, computeNextDeliveryDate } from "@/lib/delivery-utils"
+import { computeProcessingFeeCents } from "@/lib/fees"
 import type { AdminSubscription } from "@/app/actions/admin"
 
 interface Props {
@@ -342,6 +343,33 @@ export function SubscriptionsTab({ subscriptions }: Props) {
                         )}
                       </div>
                     ))}
+                    {(() => {
+                      // The card-processing fee recurs weekly as its own Stripe
+                      // line item, computed on the whole subscription subtotal.
+                      // Show the subtotal, fee, and the true weekly charge so
+                      // the admin sees what the customer actually pays.
+                      const subtotal = sub.subscription_items.reduce(
+                        (a, it) => a + (it.price_cents ?? 0) * it.quantity,
+                        0
+                      )
+                      const fee = computeProcessingFeeCents(subtotal)
+                      return (
+                        <div className="mt-2 space-y-1 border-t border-border pt-2">
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>Subtotal</span>
+                            <span>{fmt(subtotal)}/wk</span>
+                          </div>
+                          <div className="flex justify-between text-xs text-muted-foreground">
+                            <span>Processing fee</span>
+                            <span>{fmt(fee)}/wk</span>
+                          </div>
+                          <div className="flex justify-between text-sm font-semibold">
+                            <span>Weekly total</span>
+                            <span>{fmt(subtotal + fee)}/wk</span>
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 </div>
 
