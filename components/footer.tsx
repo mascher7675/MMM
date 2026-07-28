@@ -13,12 +13,13 @@ export function Footer() {
           <div className="lg:col-span-5">
             <Link href="/" className="inline-flex items-center gap-3">
               <Image
-                src="/images/logo-footer.svg"
+                src="/images/black-logo.png"
                 alt="Modern Milk Maid"
                 width={240}
                 height={240}
                 unoptimized
                 className="h-48 w-48"
+                style={{ mixBlendMode: "screen" }}
               />
             </Link>
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-background/70">
