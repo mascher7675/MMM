@@ -26,3 +26,6 @@ _env
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local claude json testing files
+.claude/

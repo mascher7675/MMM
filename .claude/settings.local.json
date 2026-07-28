@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(grep -oiE '\\(rate limit[^\"]*|over_email_send_rate_limit|email rate limit|error sending[^\"]*|smtp[^\"]*|too many requests|429|status\\\\\\\\\":[0-9]+\\)' C:/Users/matth/.claude/projects/C--Users-matth-mmm/dacfa423-bd9c-4788-a3b2-611136bb9f16/tool-results/mcp-9c9a0d4c-647a-4f77-b121-d1b2a9de5d16-get_logs-1785112176216.txt)",
+      "Bash(python -c ' *)",
+      "Bash(python)",
+      "mcp__9c9a0d4c-647a-4f77-b121-d1b2a9de5d16__execute_sql",
+      "mcp__9c9a0d4c-647a-4f77-b121-d1b2a9de5d16__get_logs"
     ]
   }
 }

@@ -274,43 +274,44 @@ function SubscriptionBlock({
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Items
         </p>
-        <div className="space-y-1">
-          {sub.subscription_items.map((item) => (
-            <div key={item.id} className="flex justify-between text-sm">
-              <span>{item.product_name ?? "—"} × {item.quantity}</span>
-              {item.price_cents != null && (
-                <span className="font-medium">{fmt(item.price_cents)}/wk</span>
+        {(() => {
+          // The card-processing fee recurs weekly as its own Stripe line
+          // item, computed on the whole subscription subtotal — so the
+          // "full price" the customer actually pays each week is subtotal + fee.
+          const subtotal = sub.subscription_items.reduce(
+            (a, it) => a + (it.price_cents ?? 0) * it.quantity,
+            0
+          )
+          const fee = computeProcessingFeeCents(subtotal)
+          const weeklyTotal = subtotal + fee
+          const singleItem = sub.subscription_items.length === 1
+
+          return (
+            <div className="space-y-1">
+              {sub.subscription_items.map((item) => (
+                <div key={item.id} className="flex justify-between text-sm">
+                  <span>{item.product_name ?? "—"} × {item.quantity}</span>
+                  {/* Single-item subs show the fee-inclusive weekly total right
+                      here; multi-item subs keep each item's own price and show
+                      the combined total on its own line below. */}
+                  {singleItem ? (
+                    <span className="font-medium">{fmt(weeklyTotal)}/wk</span>
+                  ) : (
+                    item.price_cents != null && (
+                      <span className="font-medium">{fmt(item.price_cents)}/wk</span>
+                    )
+                  )}
+                </div>
+              ))}
+              {!singleItem && (
+                <div className="mt-2 flex justify-between border-t border-border pt-2 text-sm font-semibold">
+                  <span>Weekly total</span>
+                  <span>{fmt(weeklyTotal)}/wk</span>
+                </div>
               )}
             </div>
-          ))}
-          {(() => {
-            // The card-processing fee recurs weekly as its own Stripe
-            // line item, computed on the whole subscription subtotal.
-            // Show the subtotal, fee, and the true weekly charge so
-            // the admin sees what the customer actually pays.
-            const subtotal = sub.subscription_items.reduce(
-              (a, it) => a + (it.price_cents ?? 0) * it.quantity,
-              0
-            )
-            const fee = computeProcessingFeeCents(subtotal)
-            return (
-              <div className="mt-2 space-y-1 border-t border-border pt-2">
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Subtotal</span>
-                  <span>{fmt(subtotal)}/wk</span>
-                </div>
-                <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Processing fee</span>
-                  <span>{fmt(fee)}/wk</span>
-                </div>
-                <div className="flex justify-between text-sm font-semibold">
-                  <span>Weekly total</span>
-                  <span>{fmt(subtotal + fee)}/wk</span>
-                </div>
-              </div>
-            )
-          })()}
-        </div>
+          )
+        })()}
       </div>
 
       {/* Skipped dates */}
