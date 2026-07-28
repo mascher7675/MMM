@@ -18,6 +18,7 @@ interface Profile {
   phone: string | null
   address: string | null
   city: string | null
+  state: string | null
   zip: string | null
   delivery_instructions: string | null
 }
@@ -35,6 +36,7 @@ export function ProfileForm({ userId, profile }: ProfileFormProps) {
     phone: profile?.phone || "",
     address: profile?.address || "",
     city: profile?.city || "",
+    state: profile?.state || "",
     zip: profile?.zip || "",
     deliveryInstructions: profile?.delivery_instructions || "",
   })
@@ -57,6 +59,7 @@ export function ProfileForm({ userId, profile }: ProfileFormProps) {
       phone: formData.phone,
       address: formData.address,
       city: formData.city,
+      state: formData.state,
       zip: formData.zip,
       deliveryInstructions: formData.deliveryInstructions,
     })
@@ -112,7 +115,7 @@ export function ProfileForm({ userId, profile }: ProfileFormProps) {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-3">
         <div className="space-y-2">
           <Label htmlFor="city">City</Label>
           <Input
@@ -121,6 +124,16 @@ export function ProfileForm({ userId, profile }: ProfileFormProps) {
             value={formData.city}
             onChange={handleChange}
             placeholder="Greenport"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="state">State</Label>
+          <Input
+            id="state"
+            name="state"
+            value={formData.state}
+            onChange={handleChange}
+            placeholder="NY"
           />
         </div>
         <div className="space-y-2">
