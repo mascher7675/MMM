@@ -6,17 +6,18 @@ import { Instagram, Mail, MapPin, Phone } from "lucide-react"
 
 export function Footer() {
   return (
-    <footer className="border-t border-white/10 bg-black">
+    <footer className="border-t border-border/50 bg-foreground">
       <div className="mx-auto max-w-6xl px-4 py-16 md:px-6 md:py-20">
         <div className="grid gap-x-8 gap-y-12 md:grid-cols-2 lg:grid-cols-12">
           {/* Brand Column */}
           <div className="lg:col-span-5">
             <Link href="/" className="inline-flex items-center gap-3">
               <Image
-                src="/images/black-logo.png"
+                src="/images/logo-footer.svg"
                 alt="Modern Milk Maid"
                 width={240}
                 height={240}
+                unoptimized
                 className="h-48 w-48"
               />
             </Link>
