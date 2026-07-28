@@ -176,9 +176,13 @@ export async function createCheckoutSession(
           currency: "usd",
           product_data: {
             name: product.name,
-            description: item.isSubscription
-              ? `Weekly subscription — today's payment covers your first delivery. After that, your card is charged each week at your cutoff (5 PM the evening before your ${day === "thursday" ? "Thursday" : "Friday"} delivery). Skip or cancel anytime before then.`
-              : product.description,
+            // Subscriptions: show the weekly-billing explainer.
+            // One-time items: show NO description (the marketing blurb from
+            // products.ts is intentionally omitted here). The blurb still
+            // appears on the storefront product cards — only checkout changes.
+            ...(item.isSubscription && {
+              description: `Weekly subscription — today's payment covers your first delivery. After that, your card is charged each week at your cutoff (5 PM the evening before your ${day === "thursday" ? "Thursday" : "Friday"} delivery). Skip or cancel anytime before then.`,
+            }),
           },
           unit_amount: item.isSubscription
             ? product.subscriptionPriceInCents
