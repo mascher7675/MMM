@@ -143,6 +143,9 @@ function OrderHistoryDrawer({ customer, onClose }: OrderHistoryDrawerProps) {
                               <span className="text-sm font-medium">
                                 {order.order_type === "one_time" ? "One-Time" : "Subscription"} Order
                               </span>
+                              <span className="text-xs font-medium text-muted-foreground">
+                                #{(order.order_code ?? order.id.slice(-5)).toUpperCase()}
+                              </span>
                               <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${statusColor}`}>
                                 {order.status}
                               </span>

@@ -153,6 +153,7 @@ export interface AdminMessage {
 
 export interface CustomerHistoryOrder {
   id: string
+  order_code: string | null
   order_type: string
   status: string
   delivery_state: string | null
@@ -357,7 +358,7 @@ export async function getCashCustomerHistory(customerId: string): Promise<{
     const [ordersResult, subsResult] = await Promise.all([
       supabase
         .from("orders")
-        .select("id, order_type, status, delivery_state, delivery_day, placed_at, created_at, order_items(product_name, size, quantity)")
+        .select("id, order_code, order_type, status, delivery_state, delivery_day, placed_at, created_at, order_items(product_name, size, quantity)")
         .eq("user_id", customerId)
         .order("placed_at", { ascending: false }),
       supabase
@@ -372,6 +373,7 @@ export async function getCashCustomerHistory(customerId: string): Promise<{
 
     const orders = (ordersResult.data ?? []).map(o => ({
       id: o.id,
+      order_code: o.order_code ?? null,
       order_type: o.order_type,
       status: o.status,
       delivery_state: o.delivery_state ?? null,
