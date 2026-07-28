@@ -171,13 +171,301 @@ function SkipModal({ sub, onClose, onSuccess }: SkipModalProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-subscription derived flags
+// ---------------------------------------------------------------------------
+// A subscription the customer has cancelled stays status="active" until the
+// customer.subscription.deleted webhook fires at the reactivate deadline —
+// cancel_at_period_end is the only signal that it's winding down.
+//
+// final_delivery_date carries the rest of the story, per the contract
+// documented in cancelSubscriptionAtPeriodEnd:
+//   set  = one paid delivery still ships on that date
+//   null = the pending delivery was refunded; nothing more ships
+// (getDeliveryList relies on exactly this to decide whether the stop stays on
+// the route sheet.)
+function getSubFlags(sub: AdminSubscription) {
+  const skippedDates = (sub.skipped_dates ?? []).map((d) => (d.length > 10 ? d.slice(0, 10) : d))
+  const isEnding = sub.status === "active" && sub.cancel_at_period_end === true
+  const hasFinalDelivery = isEnding && !!sub.final_delivery_date
+  return { skippedDates, hasSkips: skippedDates.length > 0, isEnding, hasFinalDelivery }
+}
+
+// ---------------------------------------------------------------------------
+// A customer's subscriptions, grouped for the merged card
+// ---------------------------------------------------------------------------
+interface CustomerGroup {
+  userId: string
+  customerName: string
+  customerEmail: string
+  subs: AdminSubscription[]
+}
+
+// ---------------------------------------------------------------------------
+// One subscription's expanded detail — items, skips, actions, Stripe link.
+// Rendered once per subscription inside a customer's merged card. When a
+// customer has more than one, `showHeader` prints a compact per-subscription
+// header so each is individually identifiable; the shared customer name/email
+// live at the card level.
+// ---------------------------------------------------------------------------
+function SubscriptionBlock({
+  sub,
+  showHeader,
+  showContact,
+  onOpenSkip,
+}: {
+  sub: AdminSubscription
+  showHeader: boolean
+  showContact: boolean
+  onOpenSkip: (id: string) => void
+}) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const { skippedDates, hasSkips, isEnding, hasFinalDelivery } = getSubFlags(sub)
+
+  return (
+    <div className={showHeader ? "rounded-lg border border-border bg-card p-4 space-y-4" : "space-y-4"}>
+
+      {/* Compact per-subscription header (merged card only) */}
+      {showHeader && (
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-0.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_COLORS[sub.status] ?? STATUS_COLORS.default}`}>
+                {sub.status}
+              </span>
+              {isEnding && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800 dark:bg-orange-950/40 dark:text-orange-300">
+                  <Ban className="h-2.5 w-2.5" />
+                  {hasFinalDelivery ? "Ending — 1 delivery left" : "Ending — no more deliveries"}
+                </span>
+              )}
+              {hasSkips && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                  <SkipForward className="h-2.5 w-2.5" />
+                  {skippedDates.length} skipped
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground capitalize">
+              {sub.delivery_day
+                ? sub.delivery_day.charAt(0).toUpperCase() + sub.delivery_day.slice(1) + "s"
+                : "—"}
+            </p>
+          </div>
+          {sub.status === "active" && (
+            <div className="shrink-0 text-right">
+              <p className="text-xs text-muted-foreground">
+                {isEnding ? (hasFinalDelivery ? "Final delivery" : "Ending") : "Next delivery"}
+              </p>
+              <p className={`text-sm font-medium ${isEnding ? "text-orange-700 dark:text-orange-400" : ""}`}>
+                {isEnding
+                  ? hasFinalDelivery
+                    ? fmtDate(sub.final_delivery_date as string)
+                    : "No more deliveries"
+                  : fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Items */}
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Items
+        </p>
+        <div className="space-y-1">
+          {sub.subscription_items.map((item) => (
+            <div key={item.id} className="flex justify-between text-sm">
+              <span>{item.product_name ?? "—"} × {item.quantity}</span>
+              {item.price_cents != null && (
+                <span className="font-medium">{fmt(item.price_cents)}/wk</span>
+              )}
+            </div>
+          ))}
+          {(() => {
+            // The card-processing fee recurs weekly as its own Stripe
+            // line item, computed on the whole subscription subtotal.
+            // Show the subtotal, fee, and the true weekly charge so
+            // the admin sees what the customer actually pays.
+            const subtotal = sub.subscription_items.reduce(
+              (a, it) => a + (it.price_cents ?? 0) * it.quantity,
+              0
+            )
+            const fee = computeProcessingFeeCents(subtotal)
+            return (
+              <div className="mt-2 space-y-1 border-t border-border pt-2">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Subtotal</span>
+                  <span>{fmt(subtotal)}/wk</span>
+                </div>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Processing fee</span>
+                  <span>{fmt(fee)}/wk</span>
+                </div>
+                <div className="flex justify-between text-sm font-semibold">
+                  <span>Weekly total</span>
+                  <span>{fmt(subtotal + fee)}/wk</span>
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      </div>
+
+      {/* Skipped dates */}
+      {hasSkips && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
+          <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
+            <SkipForward className="h-3.5 w-3.5" />
+            Skipped deliveries
+          </p>
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {skippedDates.sort().map((d) => (
+              <span key={d} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                {formatDate(d)}
+                <button
+                  onClick={() => startTransition(async () => {
+                    await adminUnskipWeeklyDelivery(sub.id, d)
+                    router.refresh()
+                  })}
+                  className="ml-0.5 hover:text-amber-600"
+                  title="Remove skip"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Contact — shown here only for single-subscription customers; merged
+          cards print the shared email once at the card level. */}
+      {showContact && sub.customer_email && (
+        <p className="text-xs text-muted-foreground">
+          <Mail className="mr-1 inline h-3 w-3" />
+          <a href={`mailto:${sub.customer_email}`} className="hover:underline">
+            {sub.customer_email}
+          </a>
+        </p>
+      )}
+
+      {/* Actions */}
+      <div>
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Actions
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {/* Active */}
+          <button
+            onClick={() =>
+              startTransition(async () => {
+                await adminUpdateSubscriptionStatus(sub.id, "active")
+                router.refresh()
+              })
+            }
+            className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer${
+              sub.status === "active"
+                ? "border-[#7C9885] bg-[#7C9885] text-white"
+                : "border-border bg-card hover:bg-secondary"
+            }`}
+          >
+            Active
+          </button>
+
+          {/* Skip deliveries */}
+          <button
+            onClick={() => onOpenSkip(sub.id)}
+            className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-secondary transition-colors cursor-pointer"
+          >
+            <SkipForward className="h-3.5 w-3.5" />
+            Skip Deliveries
+          </button>
+
+          {/* Mark Cancelled — label-only override in Supabase.
+              Does NOT stop Stripe billing. Use for manual/cash subs
+              with no Stripe subscription, or bookkeeping fixes. To
+              actually stop charging the card, use "Cancel Subscription"
+              below. */}
+          <button
+            onClick={() =>
+              startTransition(async () => {
+                await adminUpdateSubscriptionStatus(sub.id, "cancelled")
+                router.refresh()
+              })
+            }
+            className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+              sub.status === "cancelled"
+                ? "border-[#7C9885] bg-[#7C9885] text-white"
+                : "border-border bg-card hover:bg-secondary"
+            }`}
+          >
+            Mark Cancelled
+          </button>
+
+          {/* Cancel Subscription — the real thing. Immediately cancels
+              the Stripe subscription (stops all future charges) and
+              sets status to cancelled. Irreversible on Stripe: a new
+              subscription must be created to resume. Does NOT refund
+              the current already-charged week — use the Refund button
+              on the Orders tab for that if needed. */}
+          {sub.stripe_subscription_id && sub.status !== "cancelled" && (
+            <button
+              onClick={() => {
+                const ok = window.confirm(
+                  `Cancel this subscription for ${sub.customer_email ?? "this customer"}?\n\n` +
+                  `• Stops all future weekly charges immediately on Stripe.\n` +
+                  `• This cannot be undone — a new subscription would have to be created to resume.\n` +
+                  `• It does NOT refund the current already-charged week. To refund that week, use the Refund button on the Orders tab.`
+                )
+                if (!ok) return
+                startTransition(async () => {
+                  const r = await adminCancelSubscriptionOnStripe(sub.id)
+                  if (r.error) {
+                    window.alert(`Failed to cancel subscription: ${r.error}`)
+                    return
+                  }
+                  router.refresh()
+                })
+              }}
+              disabled={isPending}
+              className="flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+            >
+              <Ban className="h-3.5 w-3.5" />
+              Cancel Subscription
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Manage on Stripe */}
+      {sub.stripe_subscription_id && (
+        <div>
+          <a
+            href={`https://dashboard.stripe.com/subscriptions/${sub.stripe_subscription_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs text-[#7C9885] hover:text-[#5a7363] hover:underline transition-colors"
+          >
+            <ExternalLink className="h-3 w-3" />
+            Manage on Stripe
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 export function SubscriptionsTab({ subscriptions }: Props) {
   const router = useRouter()
+  // Expansion is keyed by customer (user_id) so a customer's whole group of
+  // subscriptions opens and closes as one merged card.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [skipModalSubId, setSkipModalSubId] = useState<string | null>(null)
-  const [isPending, startTransition] = useTransition()
   const [filter, setFilter] = useState("all")
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 20
@@ -194,9 +482,33 @@ export function SubscriptionsTab({ subscriptions }: Props) {
     ? subscriptions
     : subscriptions.filter((s) => s.status === filter)
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  // Group the (filtered) subscriptions by customer, preserving the original
+  // created_at ordering from the query — a customer's first subscription
+  // fixes the group's position, and every other subscription of theirs is
+  // merged into that one card instead of appearing as its own row.
+  const groups: CustomerGroup[] = (() => {
+    const byUser = new Map<string, CustomerGroup>()
+    const ordered: CustomerGroup[] = []
+    for (const sub of filtered) {
+      let group = byUser.get(sub.user_id)
+      if (!group) {
+        group = {
+          userId: sub.user_id,
+          customerName: sub.customer_name ?? "Unknown",
+          customerEmail: sub.customer_email ?? "",
+          subs: [],
+        }
+        byUser.set(sub.user_id, group)
+        ordered.push(group)
+      }
+      group.subs.push(sub)
+    }
+    return ordered
+  })()
+
+  const totalPages = Math.max(1, Math.ceil(groups.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
-  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const paginated = groups.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
 
   const skipModalSub = subscriptions.find((s) => s.id === skipModalSubId) ?? null
 
@@ -232,90 +544,96 @@ export function SubscriptionsTab({ subscriptions }: Props) {
         ))}
       </div>
 
-      {filtered.length === 0 && (
+      {groups.length === 0 && (
         <p className="text-sm text-muted-foreground py-6 text-center">No subscriptions found.</p>
       )}
 
-      {paginated.map((sub) => {
-        const isOpen = expanded.has(sub.id)
-        const skippedDates = (sub.skipped_dates ?? []).map((d) => d.length > 10 ? d.slice(0, 10) : d)
-        const hasSkips = skippedDates.length > 0
+      {paginated.map((group) => {
+        const isOpen = expanded.has(group.userId)
+        const multiple = group.subs.length > 1
 
-        // A subscription the customer has cancelled stays status="active" until
-        // the customer.subscription.deleted webhook fires at the reactivate
-        // deadline — cancel_at_period_end is the only signal that it's winding
-        // down. This file ignored that field entirely (even though
-        // getAdminSubscriptions selects it and AdminSubscription types it), so
-        // a cancelling subscription was indistinguishable from a healthy one.
-        //
-        // final_delivery_date carries the rest of the story, per the contract
-        // documented in cancelSubscriptionAtPeriodEnd:
-        //   set  = one paid delivery still ships on that date
-        //   null = the pending delivery was refunded; nothing more ships
-        // (getDeliveryList relies on exactly this to decide whether the stop
-        // stays on the route sheet.)
-        const isEnding = sub.status === "active" && sub.cancel_at_period_end === true
-        const hasFinalDelivery = isEnding && !!sub.final_delivery_date
+        // Aggregate flags across the customer's subscriptions for the card header.
+        const flags = group.subs.map(getSubFlags)
+        const anyEnding = flags.some((f) => f.isEnding)
+        const totalSkipped = flags.reduce((n, f) => n + f.skippedDates.length, 0)
+
+        // The "primary" subscription drives the collapsed header's next-delivery
+        // readout: prefer a live, non-cancelling one so it reflects an active
+        // subscription; fall back gracefully.
+        const primary =
+          group.subs.find((s) => s.status === "active" && !s.cancel_at_period_end) ??
+          group.subs.find((s) => s.status === "active") ??
+          group.subs[0]
+        const primaryFlags = getSubFlags(primary)
+
+        // Combined item summary across every subscription in the group.
+        const itemsSummary = group.subs
+          .flatMap((s) => s.subscription_items.map((item) => `${item.product_name ?? "Unknown"} × ${item.quantity}`))
+          .join(", ")
+
+        // Distinct delivery days across the group (usually just one).
+        const days = [...new Set(group.subs.map((s) => s.delivery_day).filter(Boolean))] as string[]
+        const daysLabel = days.length
+          ? days.map((d) => d.charAt(0).toUpperCase() + d.slice(1) + "s").join(" & ")
+          : "—"
 
         return (
-          <div key={sub.id} className="rounded-lg border border-border bg-card overflow-hidden">
+          <div key={group.userId} className="rounded-lg border border-border bg-card overflow-hidden">
             <button
-              onClick={() => toggle(sub.id)}
+              onClick={() => toggle(group.userId)}
               className="flex w-full items-center justify-between gap-4 p-4 text-left transition-colors hover:bg-secondary/40"
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_COLORS[sub.status] ?? STATUS_COLORS.default}`}>
-                    {sub.status}
-                  </span>
-                  {isEnding && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800 dark:bg-orange-950/40 dark:text-orange-300">
-                      <Ban className="h-2.5 w-2.5" />
-                      {hasFinalDelivery ? "Ending — 1 delivery left" : "Ending — no more deliveries"}
+                  {multiple ? (
+                    <span className="inline-flex items-center rounded-full bg-[#7C9885]/15 px-2 py-0.5 text-[10px] font-semibold text-[#5a7363] dark:text-[#9db9a8]">
+                      {group.subs.length} subscriptions
+                    </span>
+                  ) : (
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_COLORS[primary.status] ?? STATUS_COLORS.default}`}>
+                      {primary.status}
                     </span>
                   )}
-                  {hasSkips && (
+                  {anyEnding && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-800 dark:bg-orange-950/40 dark:text-orange-300">
+                      <Ban className="h-2.5 w-2.5" />
+                      Ending
+                    </span>
+                  )}
+                  {totalSkipped > 0 && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
                       <SkipForward className="h-2.5 w-2.5" />
-                      {skippedDates.length} skipped
+                      {totalSkipped} skipped
                     </span>
                   )}
                   <span className="text-sm font-medium text-foreground">
-                    {sub.customer_name ?? "Unknown"}
+                    {group.customerName}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs text-muted-foreground capitalize">
-                  {sub.delivery_day
-                    ? sub.delivery_day.charAt(0).toUpperCase() + sub.delivery_day.slice(1) + "s"
-                    : "—"}{" "}
-                  ·{" "}
-                  {sub.subscription_items
-                    .map((item) => `${item.product_name ?? "Unknown"} × ${item.quantity}`)
-                    .join(", ")}
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {daysLabel} · {itemsSummary}
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="hidden text-right sm:block">
                   {/* A cancelling subscription is still status="active", so this
-                      used to confidently show a computed "Next delivery" date
-                      for a delivery that will never happen. Now it reports the
-                      promised final delivery, or says plainly that nothing
-                      further ships. */}
-                  <p className={`text-xs text-muted-foreground ${sub.status === "active" ? "" : "invisible"}`}>
-                    {isEnding ? (hasFinalDelivery ? "Final delivery" : "Ending") : "Next delivery"}
+                      reports the promised final delivery, or says plainly that
+                      nothing further ships. Reflects the group's primary sub. */}
+                  <p className={`text-xs text-muted-foreground ${primary.status === "active" ? "" : "invisible"}`}>
+                    {primaryFlags.isEnding ? (primaryFlags.hasFinalDelivery ? "Final delivery" : "Ending") : "Next delivery"}
                   </p>
                   <p
-                    className={`text-sm font-medium ${sub.status === "active" ? "" : "invisible"} ${
-                      isEnding ? "text-orange-700 dark:text-orange-400" : ""
+                    className={`text-sm font-medium ${primary.status === "active" ? "" : "invisible"} ${
+                      primaryFlags.isEnding ? "text-orange-700 dark:text-orange-400" : ""
                     }`}
                   >
-                    {sub.status !== "active"
+                    {primary.status !== "active"
                       ? "—"
-                      : isEnding
-                        ? hasFinalDelivery
-                          ? fmtDate(sub.final_delivery_date as string)
+                      : primaryFlags.isEnding
+                        ? primaryFlags.hasFinalDelivery
+                          ? fmtDate(primary.final_delivery_date as string)
                           : "No more deliveries"
-                        : fmtDate(computeNextDeliveryDate(sub.delivery_day as "thursday" | "friday"))}
+                        : fmtDate(computeNextDeliveryDate(primary.delivery_day as "thursday" | "friday"))}
                   </p>
                 </div>
                 {isOpen ? (
@@ -328,191 +646,24 @@ export function SubscriptionsTab({ subscriptions }: Props) {
 
             {isOpen && (
               <div className="border-t border-border bg-secondary/20 p-4 space-y-4">
-
-                {/* Items */}
-                <div>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Items
-                  </p>
-                  <div className="space-y-1">
-                    {sub.subscription_items.map((item) => (
-                      <div key={item.id} className="flex justify-between text-sm">
-                        <span>{item.product_name ?? "—"} × {item.quantity}</span>
-                        {item.price_cents != null && (
-                          <span className="font-medium">{fmt(item.price_cents)}/wk</span>
-                        )}
-                      </div>
-                    ))}
-                    {(() => {
-                      // The card-processing fee recurs weekly as its own Stripe
-                      // line item, computed on the whole subscription subtotal.
-                      // Show the subtotal, fee, and the true weekly charge so
-                      // the admin sees what the customer actually pays.
-                      const subtotal = sub.subscription_items.reduce(
-                        (a, it) => a + (it.price_cents ?? 0) * it.quantity,
-                        0
-                      )
-                      const fee = computeProcessingFeeCents(subtotal)
-                      return (
-                        <div className="mt-2 space-y-1 border-t border-border pt-2">
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>Subtotal</span>
-                            <span>{fmt(subtotal)}/wk</span>
-                          </div>
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>Processing fee</span>
-                            <span>{fmt(fee)}/wk</span>
-                          </div>
-                          <div className="flex justify-between text-sm font-semibold">
-                            <span>Weekly total</span>
-                            <span>{fmt(subtotal + fee)}/wk</span>
-                          </div>
-                        </div>
-                      )
-                    })()}
-                  </div>
-                </div>
-
-                {/* Skipped dates */}
-                {hasSkips && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
-                    <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
-                      <SkipForward className="h-3.5 w-3.5" />
-                      Skipped deliveries
-                    </p>
-                    <div className="flex flex-wrap gap-1.5 mt-1">
-                      {skippedDates.sort().map((d) => (
-                        <span key={d} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
-                          {formatDate(d)}
-                          <button
-                            onClick={() => startTransition(async () => {
-                              await adminUnskipWeeklyDelivery(sub.id, d)
-                              router.refresh()
-                            })}
-                            className="ml-0.5 hover:text-amber-600"
-                            title="Remove skip"
-                          >
-                            <X className="h-2.5 w-2.5" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Contact */}
-                {sub.customer_email && (
+                {/* Shared contact — printed once for merged customers. */}
+                {multiple && group.customerEmail && (
                   <p className="text-xs text-muted-foreground">
                     <Mail className="mr-1 inline h-3 w-3" />
-                    <a href={`mailto:${sub.customer_email}`} className="hover:underline">
-                      {sub.customer_email}
+                    <a href={`mailto:${group.customerEmail}`} className="hover:underline">
+                      {group.customerEmail}
                     </a>
                   </p>
                 )}
-
-                {/* Actions */}
-                <div>
-                  <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Actions
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {/* Active */}
-                    <button
-                      onClick={() =>
-                        startTransition(async () => {
-                          await adminUpdateSubscriptionStatus(sub.id, "active")
-                          router.refresh()
-                        })
-                      }
-                      className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer${
-                        sub.status === "active"
-                          ? "border-[#7C9885] bg-[#7C9885] text-white"
-                          : "border-border bg-card hover:bg-secondary"
-                      }`}
-                    >
-                      Active
-                    </button>
-
-                    {/* Skip deliveries */}
-                    <button
-                      onClick={() => setSkipModalSubId(sub.id)}
-                      className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium hover:bg-secondary transition-colors cursor-pointer"
-                    >
-                      <SkipForward className="h-3.5 w-3.5" />
-                      Skip Deliveries
-                    </button>
-
-                    {/* Mark Cancelled — label-only override in Supabase.
-                        Does NOT stop Stripe billing. Use for manual/cash subs
-                        with no Stripe subscription, or bookkeeping fixes. To
-                        actually stop charging the card, use "Cancel Subscription"
-                        below. */}
-                    <button
-                      onClick={() =>
-                        startTransition(async () => {
-                          await adminUpdateSubscriptionStatus(sub.id, "cancelled")
-                          router.refresh()
-                        })
-                      }
-                      className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
-                        sub.status === "cancelled"
-                          ? "border-[#7C9885] bg-[#7C9885] text-white"
-                          : "border-border bg-card hover:bg-secondary"
-                      }`}
-                    >
-                      Mark Cancelled
-                    </button>
-
-                    {/* Cancel Subscription — the real thing. Immediately cancels
-                        the Stripe subscription (stops all future charges) and
-                        sets status to cancelled. Irreversible on Stripe: a new
-                        subscription must be created to resume. Does NOT refund
-                        the current already-charged week — use the Refund button
-                        on the Orders tab for that if needed. */}
-                    {sub.stripe_subscription_id && sub.status !== "cancelled" && (
-                      <button
-                        onClick={() => {
-                          const ok = window.confirm(
-                            `Cancel this subscription for ${sub.customer_email ?? "this customer"}?\n\n` +
-                            `• Stops all future weekly charges immediately on Stripe.\n` +
-                            `• This cannot be undone — a new subscription would have to be created to resume.\n` +
-                            `• It does NOT refund the current already-charged week. To refund that week, use the Refund button on the Orders tab.`
-                          )
-                          if (!ok) return
-                          startTransition(async () => {
-                            const r = await adminCancelSubscriptionOnStripe(sub.id)
-                            if (r.error) {
-                              window.alert(`Failed to cancel subscription: ${r.error}`)
-                              return
-                            }
-                            router.refresh()
-                          })
-                        }}
-                        disabled={isPending}
-                        className="flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
-                      >
-                        <Ban className="h-3.5 w-3.5" />
-                        Cancel Subscription
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Manage on Stripe */}
-                {sub.stripe_subscription_id && (
-                  <div>
-                    <a
-                      href={`https://dashboard.stripe.com/subscriptions/${sub.stripe_subscription_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 text-xs text-[#7C9885] hover:text-[#5a7363] hover:underline transition-colors"
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      Manage on Stripe
-                    </a>
-                  </div>
-                )}
-
+                {group.subs.map((sub) => (
+                  <SubscriptionBlock
+                    key={sub.id}
+                    sub={sub}
+                    showHeader={multiple}
+                    showContact={!multiple}
+                    onOpenSkip={setSkipModalSubId}
+                  />
+                ))}
               </div>
             )}
           </div>
