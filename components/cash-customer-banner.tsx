@@ -17,14 +17,14 @@ export function CashCustomerBanner() {
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <a
-              href="sms:+16316569549"
+              href="sms:+16316559549"
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
             >
               <MessageCircle className="h-4 w-4" />
               Text Us
             </a>
             <a
-              href="tel:+16316569549"
+              href="tel:+16316559549"
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
             >
               <Phone className="h-4 w-4" />
