@@ -130,19 +130,27 @@ async function resolvePaymentIntentForInvoice(invoiceId: string): Promise<string
 }
 
 /**
- * Given a billing period start (the cutoff moment) and the customer's
- * delivery day, find the delivery this charge pays for: the FIRST occurrence
- * of the delivery day ON or AFTER the period start.
+ * Given the cutoff date this invoice is charged at (the evening before its
+ * delivery) and the customer's delivery day, find the delivery this charge
+ * pays for: the FIRST occurrence of the delivery day ON or AFTER that date.
  *
  * Charge Wed 5 PM → delivery Thursday (next day).
  * Charge Thu 5 PM → delivery Friday (next day).
+ *
+ * ⚠️ The caller must pass the invoice's period_END, not period_start. For these
+ * advance-billed weekly renewals Stripe sets period_start to the PREVIOUS
+ * cutoff and period_end to THIS charge's cutoff (verified against live
+ * invoices: the Aug 12 charge had period_start=Aug 5, period_end=Aug 12 and
+ * pays for the Aug 13 delivery). Anchoring on period_start resolved every
+ * renewal to the delivery one week early — attaching each payment to the prior
+ * week's order and matching skips to the wrong week. Do not switch this back.
  */
 function getDeliveryDateForPeriod(
-  periodStart: string,
+  cutoffDate: string,
   deliveryDay: "thursday" | "friday"
 ): string | null {
   const targetDayNum = deliveryDay === "friday" ? 5 : 4
-  const [y, m, d] = periodStart.split("-").map(Number)
+  const [y, m, d] = cutoffDate.split("-").map(Number)
   const date = new Date(y, m - 1, d)
 
   for (let i = 0; i <= 7; i++) {
@@ -298,12 +306,15 @@ async function lookupSubAndDeliveryDate(
     skipped_dates: Array.isArray(subRow.skipped_dates) ? subRow.skipped_dates : [],
   }
 
-  const periodStartDate = easternDateStrFromUnix(invoice.period_start)
-  const deliveryDate = getDeliveryDateForPeriod(periodStartDate, sub.delivery_day)
+  // Anchor on period_END — the cutoff this invoice is charged at, the evening
+  // before the delivery it pays for. period_start points at the PREVIOUS
+  // cutoff for these advance-billed renewals; see getDeliveryDateForPeriod.
+  const cutoffDate = easternDateStrFromUnix(invoice.period_end)
+  const deliveryDate = getDeliveryDateForPeriod(cutoffDate, sub.delivery_day)
 
   if (!deliveryDate) {
     console.log(
-      `[webhook] ${eventLabel}: could not determine delivery date for period starting ${periodStartDate}`
+      `[webhook] ${eventLabel}: could not determine delivery date for charge cutoff ${cutoffDate}`
     )
     return null
   }
