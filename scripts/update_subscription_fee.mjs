@@ -65,13 +65,17 @@ if (!apply) {
   process.exit(0)
 }
 
+// Checkout creates each fee line with an inline product (product_data), and
+// Stripe marks those ad-hoc products inactive afterward — so we can't attach a
+// new price to the OLD product. Create a fresh "Processing fee" product for the
+// new price instead (same approach checkout uses).
 const updated = await stripe.subscriptions.update(subId, {
   items: [
     {
       id: feeItem.id,
       price_data: {
         currency: feeItem.price.currency,
-        product: feeItem.price.product,
+        product_data: { name: "Processing fee" },
         unit_amount: newFeeCents,
         recurring: { interval: feeItem.price.recurring.interval },
       },
