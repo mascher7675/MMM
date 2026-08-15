@@ -27,7 +27,7 @@ const milks = [
   {
     name: "Cashew Milk",
     description: "Rich & velvety smooth",
-    image: "/images/closeup-emilywithjar.jpg",
+    image: "/images/2jars-home.jpg",
     price: "From $12",
   },
 ]
