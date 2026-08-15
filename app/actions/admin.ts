@@ -214,31 +214,34 @@ export async function getAdminStats() {
       supabase.from("orders").select("*", { count: "exact", head: true }),
       supabase.from("messages").select("*", { count: "exact", head: true }).eq("status", "unread"),
       // `status` is selected so weekly revenue can exclude cancelled/refunded
-      // orders — see the reduce below.
+      // orders — see the reduce below. `subtotal` (product price, no processing
+      // fee) is what the revenue figures sum — see below.
       supabase
         .from("orders")
-        .select("id,total,order_type,status")
+        .select("id,subtotal,order_type,status")
         .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-      supabase.from("orders").select("total").eq("status", "confirmed"),
+      supabase.from("orders").select("subtotal").eq("status", "confirmed"),
     ])
 
     // ── Revenue ────────────────────────────────────────────────────────────
     // Both figures count CONFIRMED orders only, so they mean the same thing.
     //
-    // This previously had no status filter at all, while allTimeRevenue
-    // filtered status = "confirmed". Cancelled orders keep their `total`
-    // intact (cancelAndRefundOrder only flips status and records
-    // refund_amount_cents), so every refunded order was still counted as
-    // weekly revenue at full price — money that was handed back to the
-    // customer. On this database that inflated the KPI from $90 to $174.
+    // Revenue sums `subtotal` (product price), NOT `total`. `total` includes
+    // the card processing fee the customer covers, which is pass-through to
+    // Stripe — not the business's revenue — so it's excluded from these KPIs.
     //
-    // Skipped orders are unaffected either way: create_weekly_delivery_order
-    // and set_weekly_order_skip_state both zero their total.
+    // Both figures filter status = "confirmed". Cancelled orders keep their
+    // amounts intact (cancelAndRefundOrder only flips status and records
+    // refund_amount_cents), so counting them would report money that was handed
+    // back to the customer.
+    //
+    // Skipped orders are unaffected: create_weekly_delivery_order and
+    // set_weekly_order_skip_state both zero their subtotal.
     const weeklyOrdersData = ordersThisWeek.data ?? []
     const weeklyRevenue = weeklyOrdersData
       .filter((o) => o.status === "confirmed")
-      .reduce((s, o) => s + (o.total ?? 0), 0)
-    const allTimeRevenue = (revenueResult.data ?? []).reduce((s, o) => s + (o.total ?? 0), 0)
+      .reduce((s, o) => s + (o.subtotal ?? 0), 0)
+    const allTimeRevenue = (revenueResult.data ?? []).reduce((s, o) => s + (o.subtotal ?? 0), 0)
 
     return {
       totalCustomers: totalCustomers ?? 0,
