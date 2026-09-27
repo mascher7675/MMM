@@ -3,7 +3,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, ShoppingBag, Repeat, MessageSquare, DollarSign, TrendingUp } from "lucide-react"
-import { fmt, fmtDate, STATUS_COLORS, MSG_TYPE_LABEL } from "./admin-types"
+import { fmt, fmtDate, STATUS_COLORS, MSG_TYPE_LABEL, isUpcoming } from "./admin-types"
 import type { AdminStats } from "./admin-types"
 import type { AdminOrder, AdminSubscription, AdminMessage } from "@/app/actions/admin"
 
@@ -28,7 +28,9 @@ export function OverviewTab({ stats, orders, messages }: Props) {
     { label: "All-Time Revenue",     value: fmt(stats.allTimeRevenue), icon: <TrendingUp className="h-5 w-5" />,    color: "text-[#7C9885]",   isString: true },
   ]
 
-  const recentOrders = orders.slice(0, OVERVIEW_LIMIT)
+  // Skip weekly subscription orders that haven't been charged yet — see isUpcoming.
+  const nowUnix = Math.floor(Date.now() / 1000)
+  const recentOrders = orders.filter((o) => !isUpcoming(o, nowUnix)).slice(0, OVERVIEW_LIMIT)
 
   const unreadMessages = messages.filter(m => m.status === "unread")
   const shownMessages = unreadMessages.slice(0, OVERVIEW_LIMIT)

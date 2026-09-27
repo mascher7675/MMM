@@ -12,7 +12,7 @@ import {
   refundSubscriptionOrder,
   deleteOrphanedOrder,
 } from "@/app/actions/admin"
-import { fmt, fmtDate, DELIVERY_STATE_LABELS } from "./admin-types"
+import { fmt, fmtDate, DELIVERY_STATE_LABELS, isAwaitingCharge, isUpcoming } from "./admin-types"
 import type { AdminOrder } from "@/app/actions/admin"
 
 interface Props {
@@ -239,7 +239,13 @@ export function OrdersTab({ orders: initialOrders }: Props) {
       })
     : sorted
 
-  const filtered = filter === "all" ? searched : searched.filter((o) =>
+  const nowUnix = Math.floor(Date.now() / 1000)
+  const upcomingCount = searched.filter((o) => isUpcoming(o, nowUnix)).length
+
+  const filtered = filter === "upcoming"
+    ? searched.filter((o) => isUpcoming(o, nowUnix))
+    : searched.filter((o) => !isUpcoming(o, nowUnix)).filter((o) =>
+    filter === "all"          ? true :
     filter === "subscription" ? o.order_type === "subscription" :
     filter === "one_time"     ? o.order_type === "one_time" :
     filter === "cash"         ? o.is_cash_customer === true :
@@ -285,7 +291,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
 
       {/* ── Filter pills ── */}
       <div className="flex flex-wrap gap-2">
-        {["all", "pending", "delivered", "subscription", "one_time", "skipped", "cash", "online"].map((f) => (
+        {["all", "pending", "delivered", "subscription", "one_time", "skipped", "cash", "online", "upcoming"].map((f) => (
           <button
             key={f}
             onClick={() => changeFilter(f)}
@@ -296,6 +302,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
             }`}
           >
             {f === "one_time" ? "One Time" :
+             f === "upcoming" ? `Upcoming${upcomingCount ? ` (${upcomingCount})` : ""}` :
              f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
@@ -309,7 +316,9 @@ export function OrdersTab({ orders: initialOrders }: Props) {
         <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground">
           {searchQuery
             ? `No orders found matching "#${searchQuery.replace(/^#/, "")}".`
-            : "No orders match this filter."}
+            : filter === "upcoming"
+              ? "No upcoming subscription deliveries waiting to be charged."
+              : "No orders match this filter."}
         </div>
       )}
 
@@ -323,6 +332,8 @@ export function OrdersTab({ orders: initialOrders }: Props) {
         const paymentLabel     = order.is_cash_customer ? "Cash" : "Online"
         const isOrphaned       = order.customer_name === "Deleted Customer"
         const isCancelled      = order.status === "cancelled"
+        const awaitingCharge   = isAwaitingCharge(order)
+        const upcoming         = isUpcoming(order, nowUnix)
 
         const deliveryState    = optimisticStates[order.id] ?? order.delivery_state ?? "pending"
         const ds               = DELIVERY_STATE_LABELS[deliveryState] ?? DELIVERY_STATE_LABELS.pending
@@ -374,9 +385,19 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                       <span className="rounded-full border border-amber-300/60 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-500">Skipped</span>
                     ) : (
                       <>
-                        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${STATUS_OUTLINE[order.status] ?? STATUS_OUTLINE_FALLBACK}`}>
-                          {order.status}
-                        </span>
+                        {upcoming ? (
+                          <span className="rounded-full border border-slate-300/70 px-2 py-0.5 text-[10px] font-medium text-slate-600 dark:text-slate-400">
+                            Upcoming · not charged yet
+                          </span>
+                        ) : awaitingCharge ? (
+                          <span className="rounded-full border border-red-300/60 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-500">
+                            Not charged yet
+                          </span>
+                        ) : (
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium capitalize ${STATUS_OUTLINE[order.status] ?? STATUS_OUTLINE_FALLBACK}`}>
+                            {order.status}
+                          </span>
+                        )}
                         {isCancelled && order.refund_amount_cents != null && (
                           <span className="rounded-full border border-blue-200/70 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">
                             Refunded {fmt(order.refund_amount_cents)}

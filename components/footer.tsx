@@ -28,7 +28,7 @@ export function Footer() {
             </p>
             <div className="mt-6 flex items-center gap-3">
               <a
-                href="https://instagram.com/modernmilkmaid"
+                href="https://www.instagram.com/modernmilkmaid_plantbased"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-background/20 text-background transition-colors hover:border-sage hover:bg-sage hover:text-sage-foreground"

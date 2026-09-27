@@ -1,5 +1,8 @@
 // components/admin/admin-types.ts
 // Shared types, constants, and helpers used across admin components
+
+import type { AdminOrder } from "@/app/actions/admin"
+import { cutoffUnixForDeliveryDate } from "@/lib/delivery-utils"
  
 export interface AdminStats {
   totalCustomers: number
@@ -77,4 +80,26 @@ export function getUpcomingThursFri(count = 8): { label: string; value: string; 
     d.setDate(d.getDate() + 1)
   }
   return results
+}
+
+// Weekly subscription orders are pre-created by the invoice.upcoming webhook
+// about a week ahead, but Stripe doesn't charge the card until just after the
+// 5 PM cutoff the evening before delivery. Until the payment is attached, the
+// order hasn't been paid for — so it's kept out of the main list (shown only
+// under the Orders tab's "Upcoming" filter) until its cutoff passes.
+export function isAwaitingCharge(o: AdminOrder): boolean {
+  return (
+    o.order_type === "subscription" &&
+    !o.is_cash_customer &&
+    !!o.stripe_subscription_id &&
+    o.status === "confirmed" &&
+    !o.stripe_payment_intent_id
+  )
+}
+
+export function isUpcoming(o: AdminOrder, nowUnix: number): boolean {
+  if (!isAwaitingCharge(o)) return false
+  const date = o.delivery_date ?? o.placed_at?.slice(0, 10)
+  if (!date) return false
+  return nowUnix < cutoffUnixForDeliveryDate(date)
 }

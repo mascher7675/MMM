@@ -218,10 +218,31 @@ export async function getAdminStats() {
       // fee) is what the revenue figures sum — see below.
       supabase
         .from("orders")
-        .select("id,subtotal,order_type,status")
+        .select("id,subtotal,order_type,status,stripe_subscription_id,stripe_payment_intent_id")
         .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-      supabase.from("orders").select("subtotal").eq("status", "confirmed"),
+      supabase
+        .from("orders")
+        .select("subtotal,order_type,status,stripe_subscription_id,stripe_payment_intent_id")
+        .eq("status", "confirmed"),
     ])
+
+    // Online weekly subscription orders are pre-created about a week before
+    // Stripe charges the card (invoice.upcoming). Until the payment is
+    // attached they're not money received, so they're left out of revenue
+    // and the weekly count. Cash subscriptions have no stripe_subscription_id
+    // and are unaffected.
+    const isPaidOrNotStripe = (o: {
+      order_type: string
+      status: string
+      stripe_subscription_id: string | null
+      stripe_payment_intent_id: string | null
+    }) =>
+      !(
+        o.order_type === "subscription" &&
+        o.status === "confirmed" &&
+        o.stripe_subscription_id &&
+        !o.stripe_payment_intent_id
+      )
 
     // ── Revenue ────────────────────────────────────────────────────────────
     // Both figures count CONFIRMED orders only, so they mean the same thing.
@@ -237,11 +258,11 @@ export async function getAdminStats() {
     //
     // Skipped orders are unaffected: create_weekly_delivery_order and
     // set_weekly_order_skip_state both zero their subtotal.
-    const weeklyOrdersData = ordersThisWeek.data ?? []
+    const weeklyOrdersData = (ordersThisWeek.data ?? []).filter(isPaidOrNotStripe)
     const weeklyRevenue = weeklyOrdersData
       .filter((o) => o.status === "confirmed")
       .reduce((s, o) => s + (o.subtotal ?? 0), 0)
-    const allTimeRevenue = (revenueResult.data ?? []).reduce((s, o) => s + (o.subtotal ?? 0), 0)
+    const allTimeRevenue = (revenueResult.data ?? []).filter(isPaidOrNotStripe).reduce((s, o) => s + (o.subtotal ?? 0), 0)
 
     return {
       totalCustomers: totalCustomers ?? 0,
