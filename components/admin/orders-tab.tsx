@@ -426,7 +426,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
               <div className="flex items-center gap-3">
                 <div className="text-right">
                   <p className="font-semibold">{fmt(order.total)}</p>
-                  {!isOrphaned && !isSkipped && (
+                  {!isOrphaned && !isSkipped && !isCancelled && (
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ds.color}`}>
                       {isSaving ? "Saving…" : ds.label}
                     </span>
