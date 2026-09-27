@@ -3,7 +3,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, ShoppingBag, Repeat, MessageSquare, DollarSign, TrendingUp } from "lucide-react"
-import { fmt, fmtDate, STATUS_COLORS, MSG_TYPE_LABEL, isUpcoming } from "./admin-types"
+import { fmt, fmtDate, orderPlacedDate, STATUS_COLORS, MSG_TYPE_LABEL, isUpcoming } from "./admin-types"
 import type { AdminStats } from "./admin-types"
 import type { AdminOrder, AdminSubscription, AdminMessage } from "@/app/actions/admin"
 
@@ -70,7 +70,7 @@ export function OverviewTab({ stats, orders, messages }: Props) {
                       admin read here could not be pasted into the Orders
                       search — it was a different identifier for the same
                       order. */}
-                  <p className="text-xs text-muted-foreground">#{(o.order_code ?? o.id.slice(-5)).toUpperCase()} · {fmtDate(o.created_at)}</p>
+                  <p className="text-xs text-muted-foreground">#{(o.order_code ?? o.id.slice(-5)).toUpperCase()} · {orderPlacedDate(o)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold">{fmt(o.total)}</p>

@@ -12,7 +12,7 @@ import {
   refundSubscriptionOrder,
   deleteOrphanedOrder,
 } from "@/app/actions/admin"
-import { fmt, fmtDate, DELIVERY_STATE_LABELS, isAwaitingCharge, isUpcoming } from "./admin-types"
+import { fmt, fmtDate, orderPlacedDate, DELIVERY_STATE_LABELS, isAwaitingCharge, isUpcoming } from "./admin-types"
 import type { AdminOrder } from "@/app/actions/admin"
 
 interface Props {
@@ -413,7 +413,7 @@ export function OrdersTab({ orders: initialOrders }: Props) {
                   <span>·</span>
                   <span>{paymentLabel}</span>
                   <span>·</span>
-                  <span>{fmtDate(order.created_at)}</span>
+                  <span>{orderPlacedDate(order)}</span>
                   {displayNotes && (
                     <>
                       <span>·</span>

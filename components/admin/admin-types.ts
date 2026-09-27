@@ -26,6 +26,32 @@ export const fmtDate = (s: string) => {
   const d = new Date(s.length === 10 ? s + "T12:00:00" : s)
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
 }
+
+/**
+ * The date to show for "when this order is placed" in the small header line.
+ *
+ * For one-time orders and cash subscriptions, that's simply created_at — the
+ * card is charged (or the sale recorded) right then.
+ *
+ * For online subscription orders, `created_at` is when the row was
+ * pre-created by the invoice.upcoming webhook, up to a week before Stripe
+ * actually charges the card. The real charge happens at the 5 PM ET cutoff
+ * the evening before delivery_date (isUpcoming/isAwaitingCharge above), so
+ * that's the date shown instead — whether it's already happened or is still
+ * to come.
+ */
+export function orderPlacedDate(order: AdminOrder): string {
+  const isOnlineSubscription = order.order_type === "subscription" && !order.is_cash_customer && !!order.stripe_subscription_id
+  const deliveryDate = order.delivery_date ?? order.placed_at?.slice(0, 10)
+
+  if (isOnlineSubscription && deliveryDate) {
+    const [y, m, d] = deliveryDate.split("-").map(Number)
+    const chargeDate = new Date(y, m - 1, d - 1) // evening before delivery
+    return chargeDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  }
+
+  return fmtDate(order.created_at)
+}
  
 // ── Constants ─────────────────────────────────────────────────────────────────
 export const DELIVERY_STATE_LABELS: Record<string, { label: string; color: string }> = {
